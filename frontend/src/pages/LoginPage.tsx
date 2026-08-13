@@ -1,0 +1,126 @@
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
+import { ArrowRight, AlertCircle } from 'lucide-react';
+
+export const LoginPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { login } = useAuth();
+  const [emailOrUsername, setEmailOrUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const res = await api.post<{ access_token: string; user: any }>('/auth/login', {
+        email_or_username: emailOrUsername,
+        password: password,
+      });
+
+      login(res.access_token, res.user);
+      navigate('/app/feed');
+    } catch (err: any) {
+      setError(err.message || 'Login failed. Please check your credentials.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center p-4 relative">
+      <div className="page-noise" aria-hidden="true" />
+
+      <div className="w-full max-w-md bg-card border border-border rounded-3xl p-8 shadow-2xl relative z-10">
+        <div className="text-center mb-8">
+          <Link to="/" className="inline-block mb-4">
+            <img src="/edu-nexus-logo.png" alt="Edu Nexus" className="h-9 mx-auto object-contain" />
+          </Link>
+          <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground">Welcome Back</h2>
+          <p className="text-xs text-muted-foreground mt-1">Sign in to your Edu Nexus student account</p>
+        </div>
+
+        {error && (
+          <div className="mb-6 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Email or Username</label>
+            <input
+              type="text"
+              required
+              value={emailOrUsername}
+              onChange={(e) => setEmailOrUsername(e.target.value)}
+              placeholder="aarav or student@school.edu"
+              className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+            />
+          </div>
+
+          <div>
+            <div className="flex justify-between items-center mb-1.5">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Password</label>
+              <Link to="/forgot-password" className="text-[11px] font-bold text-primary hover:underline">Forgot Password?</Link>
+            </div>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="button button-primary w-full mt-4"
+          >
+            {loading ? 'Signing in...' : 'Sign In'} <ArrowRight className="w-4 h-4 ml-2" />
+          </button>
+        </form>
+
+        {/* Quick Demo Logins for fast testing */}
+        <div className="mt-8 pt-6 border-t border-border">
+          <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider text-center mb-3">Quick Demo Sign-In</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => {
+                setEmailOrUsername('aarav');
+                setPassword('password123');
+              }}
+              className="px-3 py-2 rounded-xl bg-secondary border border-border text-[11px] font-semibold text-primary hover:bg-secondary transition-colors"
+            >
+              Demo Student (Aarav)
+            </button>
+            <button
+              onClick={() => {
+                setEmailOrUsername('admin');
+                setPassword('admin123');
+              }}
+              className="px-3 py-2 rounded-xl bg-secondary border border-border text-[11px] font-semibold text-primary hover:bg-secondary transition-colors"
+            >
+              Demo Admin
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 text-center text-xs text-muted-foreground">
+          Don't have an account?{' '}
+          <Link to="/signup" className="text-primary font-bold hover:underline">
+            Create Profile
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+};
