@@ -24,7 +24,7 @@ fi
 
 # 3. Setup MySQL Database
 echo "[3/8] Configuring MySQL Database..."
-DB_PASS="EduNexusSecure2026@"
+DB_PASS="EduNexusSecure2026"
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS edu_nexus CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 sudo mysql -e "CREATE USER IF NOT EXISTS 'edunexus_user'@'localhost' IDENTIFIED BY '${DB_PASS}';"
 sudo mysql -e "ALTER USER 'edunexus_user'@'localhost' IDENTIFIED BY '${DB_PASS}';"
