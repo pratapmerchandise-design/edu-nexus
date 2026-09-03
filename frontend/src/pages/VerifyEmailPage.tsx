@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import { Mail, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export const VerifyEmailPage: React.FC = () => {
   const { user, refreshUser } = useAuth();
@@ -57,6 +58,9 @@ export const VerifyEmailPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center p-4 relative">
       <div className="page-noise" aria-hidden="true" />
+      <div className="absolute top-5 right-5 sm:top-6 sm:right-6 z-20">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md bg-card border border-border rounded-3xl p-8 shadow-2xl relative z-10 text-center">
         <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary">
           <Mail className="h-7 w-7" />

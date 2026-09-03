@@ -3,6 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { passwordRules, isStrongPassword } from '../utils/passwordPolicy';
 import { Mail, Key, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export const ForgotPasswordPage: React.FC = () => {
   const navigate = useNavigate();
@@ -69,7 +70,10 @@ export const ForgotPasswordPage: React.FC = () => {
       </div>
 
       {/* Right side */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 relative">
+        <div className="absolute top-5 right-5 sm:top-6 sm:right-6">
+          <ThemeToggle />
+        </div>
         <div className="w-full max-w-md space-y-8">
           <div>
             <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground">

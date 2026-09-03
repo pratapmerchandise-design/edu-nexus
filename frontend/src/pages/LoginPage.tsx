@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import { ArrowRight, AlertCircle } from 'lucide-react';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -35,6 +36,11 @@ export const LoginPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center p-4 relative">
       <div className="page-noise" aria-hidden="true" />
+
+      {/* Top right theme toggle and home link */}
+      <div className="absolute top-5 right-5 sm:top-6 sm:right-6 z-20 flex items-center gap-2">
+        <ThemeToggle />
+      </div>
 
       <div className="w-full max-w-md bg-card border border-border rounded-3xl p-8 shadow-2xl relative z-10">
         <div className="text-center mb-8">

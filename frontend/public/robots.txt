@@ -1,0 +1,7 @@
+# Robots.txt for EduNexus
+User-agent: *
+Allow: /
+Disallow: /app/
+Disallow: /api/
+
+Sitemap: https://edu-nexus.online/sitemap.xml

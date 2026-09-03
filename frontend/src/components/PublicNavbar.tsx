@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { ThemeToggle } from './ThemeToggle';
 
 export const PublicNavbar: React.FC = () => {
   const [scrolled, setScrolled] = useState(false);
@@ -29,6 +30,7 @@ export const PublicNavbar: React.FC = () => {
       </nav>
 
       <div className="nav-actions flex items-center gap-2.5">
+        <ThemeToggle />
         <Link
           to="/signup"
           className="hidden sm:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/25 border border-emerald-400 text-white text-xs font-bold hover:bg-emerald-500/35 transition-all shadow-[0_0_15px_rgba(34,224,121,0.3)]"

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, Sparkles } from 'lucide-react';
+import { ThemeToggle } from './ThemeToggle';
 
 export const PublicFooter: React.FC = () => {
   const productLinks = [
@@ -141,6 +142,7 @@ export const PublicFooter: React.FC = () => {
         {/* Bottom Bar with Operational Status */}
         <div className="mt-14 pt-8 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
           <div className="flex flex-wrap items-center gap-3">
+            <ThemeToggle />
             <p>© {new Date().getFullYear()} EduNexus Inc. All rights reserved.</p>
             <span className="hidden sm:inline text-muted-foreground/40">•</span>
             <div className="flex items-center gap-1.5 text-[11px] text-emerald-500 font-semibold">

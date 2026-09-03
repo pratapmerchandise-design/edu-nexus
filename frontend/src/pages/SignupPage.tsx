@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import { passwordRules, isStrongPassword } from '../utils/passwordPolicy';
 import { AlertCircle } from 'lucide-react';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 const GRADES = ['Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'];
 
@@ -214,6 +215,11 @@ export const SignupPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center p-4 relative">
       <div className="page-noise" aria-hidden="true" />
+
+      {/* Top right theme toggle */}
+      <div className="absolute top-5 right-5 sm:top-6 sm:right-6 z-20 flex items-center gap-2">
+        <ThemeToggle />
+      </div>
 
       <div className="w-full max-w-xl bg-card border border-border rounded-3xl p-8 shadow-2xl relative z-10">
         <div className="text-center mb-6">
