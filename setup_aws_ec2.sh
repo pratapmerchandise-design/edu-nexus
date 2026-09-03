@@ -11,9 +11,12 @@ echo "  🚀 Starting EduNexus Automated Setup on AWS EC2     "
 echo "======================================================"
 
 # 1. Update system packages
-echo "[1/8] Updating Ubuntu system packages..."
-sudo apt update -y && sudo apt upgrade -y
-sudo apt install -y python3-pip python3-venv git nginx mysql-server certbot python3-certbot-nginx curl ufw fail2ban
+echo "[1/8] Installing server prerequisites..."
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+sudo sed -i 's/#$nrconf{restart} = .*/$nrconf{restart} = "a";/g' /etc/needrestart/needrestart.conf 2>/dev/null || true
+sudo apt update -y
+sudo DEBIAN_FRONTEND=noninteractive apt install -y python3-pip python3-venv git nginx mysql-server certbot python3-certbot-nginx curl fail2ban
 
 # 2. Install Node.js 20 LTS
 echo "[2/8] Installing Node.js 20 LTS..."
