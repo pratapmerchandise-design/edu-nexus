@@ -14,6 +14,19 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 sudo sed -i 's/#$nrconf{restart} = .*/$nrconf{restart} = "a";/g' /etc/needrestart/needrestart.conf 2>/dev/null || true
 
+# 0. Create Swap Space and Clean Locks to prevent freezes
+echo "[0/7] Configuring system memory and cleaning previous processes..."
+if [ ! -f /swapfile ]; then
+    sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    echo "/swapfile swap swap defaults 0 0" | sudo tee -a /etc/fstab > /dev/null
+    echo "✅ Swap space created."
+fi
+sudo rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*
+sudo dpkg --configure -a || true
+
 # 1. Install essential packages only (NO mysql-server — avoids 5-min hang)
 echo "[1/7] Installing Nginx, Python, Git, Certbot, Node.js..."
 sudo apt update -y
