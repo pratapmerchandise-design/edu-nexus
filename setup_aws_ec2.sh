@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # EduNexus — 1-Click AWS EC2 Automated Production Setup Script
-# Designed for Ubuntu 22.04 LTS on AWS Free Tier (t2.micro / t3.micro)
+# Fast, non-interactive. Uses SQLite (no MySQL install needed).
 # ==============================================================================
 
 set -e
@@ -10,70 +10,65 @@ echo "======================================================"
 echo "  🚀 Starting EduNexus Automated Setup on AWS EC2     "
 echo "======================================================"
 
-# 1. Update system packages
-echo "[1/8] Installing server prerequisites..."
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 sudo sed -i 's/#$nrconf{restart} = .*/$nrconf{restart} = "a";/g' /etc/needrestart/needrestart.conf 2>/dev/null || true
+
+# 1. Install essential packages only (NO mysql-server — avoids 5-min hang)
+echo "[1/7] Installing Nginx, Python, Git, Certbot, Node.js..."
 sudo apt update -y
-sudo DEBIAN_FRONTEND=noninteractive apt install -y python3-pip python3-venv git nginx mysql-server certbot python3-certbot-nginx curl fail2ban
+sudo DEBIAN_FRONTEND=noninteractive apt install -y \
+    python3-pip python3-venv git nginx certbot python3-certbot-nginx curl
 
-# 2. Install Node.js 20 LTS
-echo "[2/8] Installing Node.js 20 LTS..."
+# Node.js 20
 if ! command -v node &> /dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt install -y nodejs
+    echo "Installing Node.js 20..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs
 fi
+echo "✅ Node $(node -v), Python $(python3 --version) installed."
 
-# 3. Setup MySQL Database
-echo "[3/8] Configuring MySQL Database..."
-DB_PASS="EduNexusSecure2026"
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS edu_nexus CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-sudo mysql -e "CREATE USER IF NOT EXISTS 'edunexus_user'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-sudo mysql -e "ALTER USER 'edunexus_user'@'localhost' IDENTIFIED BY '${DB_PASS}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON edu_nexus.* TO 'edunexus_user'@'localhost';"
-sudo mysql -e "FLUSH PRIVILEGES;"
-
-# 4. Project Directory Check
+# 2. Clone or pull repository
 REPO_DIR="/var/www/edunexus"
-if [ ! -d "$REPO_DIR" ]; then
-    echo "[4/8] Creating directory and cloning repository..."
+echo "[2/7] Setting up project directory..."
+if [ ! -d "$REPO_DIR/.git" ]; then
     sudo mkdir -p "$REPO_DIR"
     sudo chown -R $USER:$USER "$REPO_DIR"
     git clone https://github.com/pratapmerchandise-design/edu-nexus.git "$REPO_DIR"
 else
-    echo "[4/8] Pulling latest repository code..."
+    sudo chown -R $USER:$USER "$REPO_DIR"
     cd "$REPO_DIR"
-    git pull origin main || true
+    git fetch origin main
+    git reset --hard origin/main
 fi
-
 cd "$REPO_DIR"
 
-# 5. Backend Virtual Environment & Dependencies
-echo "[5/8] Setting up Python backend virtual environment..."
+# 3. Python Virtual Environment
+echo "[3/7] Setting up Python backend..."
 if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
 source venv/bin/activate
-pip install --upgrade pip
-pip install -r backend/requirements.txt
-pip install "email-validator>=2.1.0"
+pip install --upgrade pip -q
+pip install -r backend/requirements.txt -q
+pip install "email-validator>=2.1.0" -q
 
-# Create production backend/.env if not present
+# Create backend/.env using SQLite (fast, zero setup)
 SECRET_KEY_GEN=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-PUBLIC_IP=$(curl -s http://checkip.amazonaws.com || echo "localhost")
+PUBLIC_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null || echo "localhost")
 
 cat <<EOF > backend/.env
-# Production Database Configuration
-DATABASE_URL=mysql+pymysql://edunexus_user:${DB_PASS}@localhost:3306/edu_nexus
+# Production Database (SQLite - fast and reliable)
+DATABASE_URL=sqlite:///./edunexus.db
 
 # Security Key
+JWT_SECRET_KEY=${SECRET_KEY_GEN}
 SECRET_KEY=${SECRET_KEY_GEN}
 
 # Platform Administrator Initial Credentials
 ADMIN_INITIAL_PASSWORD=SarthakVermaEdu12@
 
-# Official Project Email Desk
+# Email Configuration
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USER=edunexus.infodesk@gmail.com
@@ -81,26 +76,33 @@ EMAIL_PASSWORD=
 EMAIL_FROM=EduNexus <edunexus.infodesk@gmail.com>
 
 # Frontend Public URL
-FRONTEND_BASE=http://${PUBLIC_IP}
+FRONTEND_BASE=https://edu-nexus.online
 EOF
 
-# Initialize Database Schema & Admin Account
-python3 -c "from backend.app.database import engine, Base; from backend.app.models import *; Base.metadata.create_all(bind=engine); print('[DB] Schema initialized.')"
-python3 -c "from backend.app.main import startup_event; startup_event(); print('[Admin] Verified credentials.')"
+echo "✅ Backend configured with SQLite."
 
-# 6. Build Frontend
-echo "[6/8] Building Frontend React application..."
+# Initialize Database & Admin
+python3 -c "
+from backend.app.database import engine, Base
+from backend.app.models import *
+Base.metadata.create_all(bind=engine)
+print('[DB] SQLite schema initialized.')
+"
+
+# 4. Build Frontend
+echo "[4/7] Building Frontend (Favicon, Title, SEO, Light/Dark mode)..."
 cd "$REPO_DIR/frontend"
-npm install
-npm run build
+npm install --silent 2>/dev/null || npm install
+npx vite build
 cd "$REPO_DIR"
+echo "✅ Frontend built successfully."
 
-# 7. Create and Start Systemd Background Service
-echo "[7/8] Configuring Systemd 24/7 background service..."
-sudo bash -c "cat <<EOF > /etc/systemd/system/edunexus.service
+# 5. Systemd service
+echo "[5/7] Configuring 24/7 background service..."
+cat <<EOF | sudo tee /etc/systemd/system/edunexus.service > /dev/null
 [Unit]
 Description=EduNexus FastAPI Backend
-After=network.target mysql.service
+After=network.target
 
 [Service]
 User=$USER
@@ -112,83 +114,81 @@ EnvironmentFile=$REPO_DIR/backend/.env
 
 [Install]
 WantedBy=multi-user.target
-EOF"
+EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable edunexus
 sudo systemctl restart edunexus
+echo "✅ Backend service started."
 
-# 8. Configure Nginx Web Server & Reverse Proxy
-echo "[8/8] Configuring Nginx web server and reverse proxy..."
-sudo bash -c "cat <<EOF > /etc/nginx/sites-available/edunexus
+# 6. Configure Nginx
+echo "[6/7] Configuring Nginx reverse proxy..."
+cat <<'NGINXEOF' | sudo tee /etc/nginx/sites-available/edunexus > /dev/null
 server {
     listen 80;
-    server_name edu-nexus.online www.edu-nexus.online ${PUBLIC_IP} _;
+    server_name edu-nexus.online www.edu-nexus.online _;
 
     client_max_body_size 50M;
 
-    # 1. Frontend SPA
-    root $REPO_DIR/frontend/dist;
+    root /var/www/edunexus/frontend/dist;
     index index.html;
 
     location / {
-        try_files \\\$uri \\\$uri/ /index.html;
+        try_files $uri $uri/ /index.html;
     }
 
-    # 2. REST API
     location /api/ {
         proxy_pass http://127.0.0.1:8000/api/;
         proxy_http_version 1.1;
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
-        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\\$scheme;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # 3. WebSocket Realtime Chat
     location /ws/ {
         proxy_pass http://127.0.0.1:8000/ws/;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \\\$http_upgrade;
-        proxy_set_header Connection \"upgrade\";
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # 4. Media Uploads
     location /uploads/ {
         proxy_pass http://127.0.0.1:8000/uploads/;
-        proxy_set_header Host \\\$host;
+        proxy_set_header Host $host;
     }
 }
-EOF"
+NGINXEOF
 
 sudo ln -sf /etc/nginx/sites-available/edunexus /etc/nginx/sites-enabled/edunexus
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
+echo "✅ Nginx configured."
 
-# Disable OS internal firewall (AWS Security Groups handle network security)
-sudo ufw disable || true
-if command -v iptables &> /dev/null; then
-    sudo iptables -F || true
-fi
+# Disable internal firewall (AWS Security Groups handle this)
+sudo ufw disable 2>/dev/null || true
 
-# Request Free SSL (HTTPS) certificate for domain
-echo "Activating Free SSL Certificate (HTTPS) for edu-nexus.online..."
-sudo certbot --nginx -d edu-nexus.online -d www.edu-nexus.online --non-interactive --agree-tos -m edunexus.infodesk@gmail.com --redirect || true
+# 7. Free SSL Certificate (HTTPS)
+echo "[7/7] Activating Free HTTPS/SSL certificate..."
+sudo certbot --nginx \
+    -d edu-nexus.online \
+    -d www.edu-nexus.online \
+    --non-interactive \
+    --agree-tos \
+    -m edunexus.infodesk@gmail.com \
+    --redirect 2>/dev/null || echo "(SSL will activate once DNS points to this IP)"
 
 echo "======================================================"
-echo "  🎉 EduNexus is LIVE and SECURED on AWS EC2!        "
+echo "  🎉 EduNexus is LIVE and SECURED!                   "
 echo "======================================================"
-echo "🌐 Custom Domain URL:  https://edu-nexus.online"
-echo "🌐 WWW Domain URL:     https://www.edu-nexus.online"
-echo "🌐 Direct IP URL:      http://${PUBLIC_IP}"
-echo "🔑 Login URL:          https://edu-nexus.online/login"
-echo "🛡️ Admin Dashboard:    https://edu-nexus.online/app/admin"
+echo "🌐 Domain:    https://edu-nexus.online"
+echo "🌐 WWW:       https://www.edu-nexus.online"
+echo "🌐 Direct IP: http://${PUBLIC_IP}"
 echo ""
-echo "👤 Admin Credentials:"
-echo "   Username:          admin"
-echo "   Email:             edunexus.infodesk@gmail.com"
-echo "   Password:          SarthakVermaEdu12@"
+echo "👤 Admin Login:"
+echo "   Email:    edunexus.infodesk@gmail.com"
+echo "   Password: SarthakVermaEdu12@"
 echo "======================================================"
