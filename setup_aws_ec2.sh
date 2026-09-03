@@ -120,7 +120,7 @@ echo "[8/8] Configuring Nginx web server and reverse proxy..."
 sudo bash -c "cat <<EOF > /etc/nginx/sites-available/edunexus
 server {
     listen 80;
-    server_name ${PUBLIC_IP} _;
+    server_name edu-nexus.online www.edu-nexus.online ${PUBLIC_IP} _;
 
     client_max_body_size 50M;
 
@@ -171,12 +171,18 @@ if command -v iptables &> /dev/null; then
     sudo iptables -F || true
 fi
 
+# Request Free SSL (HTTPS) certificate for domain
+echo "Activating Free SSL Certificate (HTTPS) for edu-nexus.online..."
+sudo certbot --nginx -d edu-nexus.online -d www.edu-nexus.online --non-interactive --agree-tos -m edunexus.infodesk@gmail.com --redirect || true
+
 echo "======================================================"
-echo "  🎉 EduNexus is LIVE on AWS EC2!                     "
+echo "  🎉 EduNexus is LIVE and SECURED on AWS EC2!        "
 echo "======================================================"
-echo "🌐 Website URL:        http://${PUBLIC_IP}"
-echo "🔑 Login URL:          http://${PUBLIC_IP}/login"
-echo "🛡️ Admin Dashboard:    http://${PUBLIC_IP}/app/admin"
+echo "🌐 Custom Domain URL:  https://edu-nexus.online"
+echo "🌐 WWW Domain URL:     https://www.edu-nexus.online"
+echo "🌐 Direct IP URL:      http://${PUBLIC_IP}"
+echo "🔑 Login URL:          https://edu-nexus.online/login"
+echo "🛡️ Admin Dashboard:    https://edu-nexus.online/app/admin"
 echo ""
 echo "👤 Admin Credentials:"
 echo "   Username:          admin"
