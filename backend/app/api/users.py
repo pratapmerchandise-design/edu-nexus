@@ -1,12 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
-from backend.app.models import User, Profile, Follow, Interest, Skill, Notification
+from backend.app.models import User, Profile, Follow, Interest, Skill, Notification, Conversation, ConversationMember
 from backend.app.schemas import ProfileUpdate
-from backend.app.auth.security import get_current_user
+from backend.app.auth.security import get_current_user, get_current_user_optional
+from backend.app.models import Post
 from backend.app.utils import format_user_out
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.get("/public/{username}")
+def get_public_profile(username: str, db: Session = Depends(get_db), current_user: User | None = Depends(get_current_user_optional)):
+    """Shareable public profile preview. Social actions remain authenticated-only."""
+    target = db.query(User).filter(User.username == username.lower()).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    profile = format_user_out(target, current_user.id if current_user else None, db)
+    posts = db.query(Post).filter(Post.author_id == target.id, Post.is_deleted == False, Post.audience == 'public').order_by(Post.created_at.desc()).limit(12).all()
+    return {"profile": profile, "posts": [{"id": p.id, "content": p.content, "title": p.title, "image_url": p.image_url, "created_at": p.created_at, "post_type": p.post_type} for p in posts]}
 
 @router.get("/{username}")
 def get_user_profile(username: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -98,6 +109,18 @@ def follow_user(username: str, current_user: User = Depends(get_current_user), d
             link=f"/app/profile/{current_user.username}"
         )
         db.add(notif)
+
+        # If now mutual followers, auto-accept any pending direct message conversation
+        reverse_follow = db.query(Follow).filter(Follow.follower_id == target_user.id, Follow.followed_id == current_user.id).first()
+        if reverse_follow:
+            my_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == current_user.id).all()]
+            target_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == target_user.id).all()]
+            common_ids = set(my_conv_ids).intersection(set(target_conv_ids))
+            for cid in common_ids:
+                conv = db.query(Conversation).filter(Conversation.id == cid, Conversation.is_group == False).first()
+                if conv and conv.status == 'pending':
+                    conv.status = 'accepted'
+
         db.commit()
 
     return {"message": "Followed successfully", "is_following": True}

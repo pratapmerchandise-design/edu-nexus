@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { AppLayout } from '../../components/AppLayout';
-import { api } from '../../services/api';
+import { api, uploadFile } from '../../services/api';
+import { MembershipBadge } from '../../components/MembershipBadge';
+import { UserAvatar } from '../../components/UserAvatar';
+import { SpotlightCard } from '../../components/reactbits/SpotlightCard';
+import { AuroraGlow } from '../../components/reactbits/AuroraGlow';
 import type { Post, Comment } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
-import { renderContentWithHighlights, timeAgo } from '../../utils/textUtils';
-import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info } from 'lucide-react';
+import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/textUtils';
+import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, ChevronUp, CornerDownRight, Send } from 'lucide-react';
 
 export const FeedPage: React.FC = () => {
   const { user } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<string>('ALL');
+  const [feedMode, setFeedMode] = useState<'for-you' | 'following' | 'trending' | 'school'>('for-you');
   
   // Post Creation State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -23,6 +28,9 @@ export const FeedPage: React.FC = () => {
   const [showPoll, setShowPoll] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [replyPrivacy, setReplyPrivacy] = useState<'everyone' | 'followers' | 'mentioned'>('everyone');
+  const [audience, setAudience] = useState<'public' | 'followers' | 'community'>('public');
+  const [communityId, setCommunityId] = useState<number | null>(null);
+  const [mySchools, setMySchools] = useState<any[]>([]);
   const [showPrivacyDropdown, setShowPrivacyDropdown] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showLocationInput, setShowLocationInput] = useState(false);
@@ -33,16 +41,30 @@ export const FeedPage: React.FC = () => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState('');
   const [replyParentId, setReplyParentId] = useState<number | null>(null);
+  const [replyingToUser, setReplyingToUser] = useState<string | null>(null);
+  const [expandedReplies, setExpandedReplies] = useState<Record<number, boolean>>({});
 
   // Report Modal State
   const [reportingPostId, setReportingPostId] = useState<number | null>(null);
   const [reportReason, setReportReason] = useState('Spam');
   const [reportDetails, setReportDetails] = useState('');
 
+  // Image Lightbox State
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [sharePost, setSharePost] = useState<Post | null>(null);
+  const [shareConversations, setShareConversations] = useState<any[]>([]);
+  const [sharing, setSharing] = useState(false);
+
   const fetchPosts = async () => {
     try {
-      const typeQuery = filterType !== 'ALL' ? `?post_type=${filterType}` : '';
-      const data = await api.get<Post[]>(`/posts${typeQuery}`);
+      const params = new URLSearchParams();
+      if (filterType !== 'ALL') params.set('post_type', filterType);
+      if (feedMode === 'for-you') params.set('feed', 'recommended');
+      if (feedMode === 'following') params.set('feed', 'following');
+      if (feedMode === 'trending') params.set('feed', 'trending');
+      if (feedMode === 'school') params.set('school_only', 'true');
+      const qs = params.toString();
+      const data = await api.get<Post[]>(`/posts${qs ? `?${qs}` : ''}`);
       setPosts(data);
     } catch (e) {
       console.error('Failed to load posts:', e);
@@ -53,31 +75,32 @@ export const FeedPage: React.FC = () => {
 
   useEffect(() => {
     fetchPosts();
-  }, [filterType]);
+  }, [filterType, feedMode]);
+
+  useEffect(() => {
+    if (showCreateModal && mySchools.length === 0) {
+      api.get<any[]>('/schools').then(setMySchools).catch(() => setMySchools([]));
+    }
+  }, [showCreateModal, mySchools.length]);
+
+  const isPaidMember = !!(user?.membership?.active && user?.membership?.tier);
+
+  const openCreate = () => {
+    setAudience('public');
+    setCommunityId(null);
+    setShowCreateModal(true);
+  };
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploadingImage(true);
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('http://localhost:8000/api/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNewImageUrl(data.url);
-      } else {
-        alert(data.detail || 'Upload failed');
-      }
-    } catch (error) {
+      const data = await uploadFile(file);
+      setNewImageUrl(data.url);
+    } catch (error: any) {
       console.error(error);
-      alert('Error uploading image');
+      alert(error.message || 'Error uploading image');
     } finally {
       setIsUploadingImage(false);
     }
@@ -94,6 +117,8 @@ export const FeedPage: React.FC = () => {
         post_type: newPostType,
         image_url: newImageUrl.trim() || undefined,
         reply_privacy: replyPrivacy,
+        audience: audience,
+        community_id: audience === 'community' ? communityId : undefined,
         location: newLocation.trim() || undefined,
       };
 
@@ -108,6 +133,8 @@ export const FeedPage: React.FC = () => {
       setNewImageUrl('');
       setPollOptions(['', '']);
       setReplyPrivacy('everyone');
+      setAudience('public');
+      setCommunityId(null);
       setShowEmojiPicker(false);
       setShowLocationInput(false);
       setNewLocation('');
@@ -143,6 +170,31 @@ export const FeedPage: React.FC = () => {
     }
   };
 
+  const handleShare = async (post: Post) => {
+    setSharePost(post);
+    try { setShareConversations(await api.get<any[]>('/conversations')); } catch { setShareConversations([]); }
+  };
+
+  const shareExternally = async (post: Post) => {
+    const url = `${window.location.origin}/p/${post.id}`;
+    try {
+      if (navigator.share) await navigator.share({ title: post.title || 'EduNexus post', text: post.content.slice(0, 120), url });
+      else { await navigator.clipboard.writeText(url); alert('Post link copied!'); }
+    } catch { /* sharing was cancelled */ }
+  };
+
+  const shareToConversation = async (conversation: any) => {
+    if (!sharePost) return;
+    setSharing(true);
+    try {
+      const url = `${window.location.origin}/p/${sharePost.id}`;
+      await api.post(`/conversations/${conversation.id}/messages`, { content: `Shared a post with you: ${url}` });
+      setSharePost(null);
+      alert('Post shared in chat.');
+    } catch (e: any) { alert(e.message || 'Could not share in chat.'); }
+    finally { setSharing(false); }
+  };
+
   const handleVotePoll = async (postId: number, optionId: number) => {
     try {
       await api.post(`/posts/${postId}/poll/vote/${optionId}`);
@@ -154,12 +206,47 @@ export const FeedPage: React.FC = () => {
 
   const openComments = async (post: Post) => {
     setActiveCommentPost(post);
+    setReplyParentId(null);
+    setReplyingToUser(null);
     try {
       const comms = await api.get<Comment[]>(`/posts/${post.id}/comments`);
       setComments(comms);
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleToggleCommentLike = async (commentId: number) => {
+    try {
+      const res = await api.post<{ liked: boolean; likes_count: number }>(`/posts/comments/${commentId}/like`);
+      // Update both top-level comments and nested replies
+      const apply = (list: Comment[]): Comment[] =>
+        list.map((c) => {
+          if (c.id === commentId) return { ...c, user_liked: res.liked, likes_count: res.likes_count };
+          if (c.replies?.length) return { ...c, replies: apply(c.replies) };
+          return c;
+        });
+      setComments((prev) => apply(prev));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const toggleReplies = (commentId: number) => {
+    setExpandedReplies((prev) => ({
+      ...prev,
+      [commentId]: !prev[commentId],
+    }));
+  };
+
+  const startReply = (commentId: number, username: string) => {
+    setReplyParentId(commentId);
+    setReplyingToUser(username);
+  };
+
+  const cancelReply = () => {
+    setReplyParentId(null);
+    setReplyingToUser(null);
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -171,10 +258,15 @@ export const FeedPage: React.FC = () => {
         content: commentInput.trim(),
         parent_id: replyParentId,
       });
+      const sentParentId = replyParentId;
       setCommentInput('');
       setReplyParentId(null);
+      setReplyingToUser(null);
       const comms = await api.get<Comment[]>(`/posts/${activeCommentPost.id}/comments`);
       setComments(comms);
+      if (sentParentId) {
+        setExpandedReplies((prev) => ({ ...prev, [sentParentId]: true }));
+      }
       // Update comment count locally
       setPosts((prev) =>
         prev.map((p) =>
@@ -207,263 +299,414 @@ export const FeedPage: React.FC = () => {
     }
   };
 
-  const postTypes = ['ALL', 'HELP', 'WIN', 'IDEA', 'COLLAB', 'POLL'];
+  const postCategories = [
+    { type: 'ALL', label: 'All Posts', icon: Globe },
+    { type: 'COLLAB', label: 'Collaborations', icon: Handshake },
+    { type: 'IDEA', label: 'Project Ideas', icon: Lightbulb },
+    { type: 'HELP', label: 'Questions & Help', icon: Info },
+    { type: 'WIN', label: 'Wins & Milestones', icon: Trophy },
+    { type: 'POLL', label: 'Polls & Surveys', icon: BarChart2 },
+  ];
+
+  const getPostTypeBadge = (type: string) => {
+    switch (type) {
+      case 'COLLAB':
+        return { label: 'Collaboration', icon: Handshake, className: 'bg-blue-500/10 text-blue-500 border-blue-500/20' };
+      case 'IDEA':
+        return { label: 'Project Idea', icon: Lightbulb, className: 'bg-amber-500/10 text-amber-500 border-amber-500/20' };
+      case 'HELP':
+        return { label: 'Asking for Help', icon: Info, className: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' };
+      case 'WIN':
+        return { label: 'Win & Milestone', icon: Trophy, className: 'bg-purple-500/10 text-purple-500 border-purple-500/20' };
+      case 'POLL':
+        return { label: 'Poll', icon: BarChart2, className: 'bg-pink-500/10 text-pink-500 border-pink-500/20' };
+      default:
+        return { label: type, icon: Sparkles, className: 'bg-secondary text-muted-foreground border-border' };
+    }
+  };
 
   return (
     <AppLayout>
       <div className="max-w-3xl mx-auto space-y-6">
-        {/* Feed Header / Create Bar */}
-        <div className="bg-card border border-border rounded-2xl p-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => setShowCreateModal(true)}>
-            <img
-              src={user?.profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username}`}
-              alt={user?.username}
-              className="w-10 h-10 rounded-full border border-border object-cover"
+        {/* Feed Header / Create Bar with subtle ambient glow */}
+        <div className="bg-card border border-border rounded-2xl p-4 flex items-center justify-between gap-4 shadow-sm relative overflow-hidden">
+          <AuroraGlow size="sm" opacity={0.3} />
+          <div className="flex items-center gap-3 flex-1 cursor-pointer relative z-10" onClick={() => setShowCreateModal(true)}>
+            <UserAvatar
+              src={user?.profile?.avatar_url}
+              username={user?.username}
+              size={40}
             />
-            <div className="bg-secondary border border-border rounded-xl px-4 py-2.5 text-xs text-muted-foreground flex-1">
-              Share what you're building, ask for help, or create a poll...
+            <div className="bg-secondary/70 backdrop-blur-sm border border-border rounded-xl px-4 py-2.5 text-xs text-muted-foreground flex-1 hover:border-primary/40 transition-colors">
+              What's on your mind? Share something with the Nexus...
             </div>
           </div>
 
           <button
-            onClick={() => setShowCreateModal(true)}
-            className="button button-small button-solid"
+            onClick={openCreate}
+            className="button button-small button-solid relative z-10 glow-on-hover"
           >
-            <Plus className="w-4 h-4 mr-1" /> Post
+            <Plus className="w-4 h-4 mr-1" /> New Post
           </button>
+        </div>
+
+        {/* Feed Mode Toggle */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1 bg-secondary border border-border rounded-full p-1">
+            <button
+              onClick={() => setFeedMode('for-you')}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                feedMode === 'for-you' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              For You
+            </button>
+            <button
+              onClick={() => setFeedMode('following')}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                feedMode === 'following' ? 'bg-primary text-primary-foreground shadow-sm shadow-primary/30' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              Following
+            </button>
+            {(['trending', 'school'] as const).map((mode) => (
+              <button key={mode} onClick={() => setFeedMode(mode)} className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${feedMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                {mode === 'school' ? '🏫 In My School' : 'Trending'}
+              </button>
+            ))}
+          </div>
+          {feedMode === 'for-you' && (
+            <span className="text-[10px] text-muted-foreground hidden sm:block">Ranked by your interests, skills &amp; people you follow</span>
+          )}
         </div>
 
         {/* Filter Pills */}
         <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-          {postTypes.map((type) => (
-            <button
-              key={type}
-              onClick={() => setFilterType(type)}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
-                filterType === type
-                  ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
-                  : 'bg-card text-muted-foreground border border-border hover:text-foreground'
-              }`}
-            >
-              {type}
-            </button>
-          ))}
+          {postCategories.map((cat) => {
+            const Icon = cat.icon;
+            const isSelected = filterType === cat.type;
+            return (
+              <button
+                key={cat.type}
+                onClick={() => setFilterType(cat.type)}
+                className={`px-3.5 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
+                    : 'bg-card text-muted-foreground border border-border hover:text-foreground hover:bg-secondary'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{cat.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Posts Feed */}
         {loading ? (
-          <div className="py-20 text-center text-xs text-muted-foreground">Loading student feed...</div>
+          <div className="py-20 text-center text-xs text-muted-foreground animate-pulse">Loading student feed...</div>
         ) : posts.length === 0 ? (
-          <div className="bg-card border border-border rounded-2xl p-12 text-center">
+          <div className="bg-card border border-border rounded-2xl p-12 text-center shadow-sm">
             <Sparkles className="w-8 h-8 text-primary mx-auto mb-3" />
-            <h3 className="text-lg font-bold text-foreground uppercase">No posts found</h3>
-            <p className="text-xs text-muted-foreground mt-1">Be the first student to create a post in this section!</p>
+            <h3 className="text-base font-bold text-foreground">No posts found</h3>
+            <p className="text-xs text-muted-foreground mt-1">Be the first student to create a post in this category!</p>
           </div>
         ) : (
           <div className="space-y-4">
-            {posts.map((post) => (
-              <article key={post.id} className="ui-card p-5 space-y-4">
-                {/* Author row */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={post.author_avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${post.author_username}`}
-                      alt={post.author_username}
-                      className="w-10 h-10 rounded-full border border-border object-cover"
-                    />
-                    <div>
-                      <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        {post.author_name}
-                        <span className="text-[10px] text-primary font-medium">@{post.author_username}</span>
-                      </h4>
-                      <p className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                        <span>
-                          {post.author_school ? `${post.author_school} ` : ''}
-                          <span className="mx-1">•</span>
-                          {new Date(post.created_at).toLocaleDateString()}
-                          <span className="mx-1">•</span>
-                          <span className="hover:underline">{timeAgo(post.created_at)}</span>
-                        </span>
-                        {post.location && (
-                          <span className="flex items-center gap-0.5 text-primary">
-                            • <MapPin className="w-3 h-3 ml-1" /> {post.location}
+            {posts.map((post) => {
+              const badge = getPostTypeBadge(post.post_type);
+              const BadgeIcon = badge.icon;
+              return (
+                <SpotlightCard key={post.id} className="p-6 space-y-5 glow-on-hover shadow-sm">
+                  {/* Author row */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <UserAvatar
+                        src={post.author_avatar}
+                        username={post.author_username}
+                        membership={post.author_membership}
+                        size={42}
+                      />
+                      <div className="space-y-0.5">
+                        <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                          {post.author_name}
+                          <MembershipBadge membership={post.author_membership} size={14} />
+                          <span className="text-xs text-primary font-medium">@{post.author_username}</span>
+                        </h4>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap">
+                          <span>
+                            {post.author_school ? `${post.author_school} ` : ''}
+                            <span className="mx-1">•</span>
+                            {new Date(post.created_at).toLocaleDateString()}
+                            <span className="mx-1">•</span>
+                            <span className="hover:underline">{timeAgo(post.created_at)}</span>
                           </span>
-                        )}
-                      </p>
+                          {post.location && (
+                            <span className="flex items-center gap-0.5 text-primary">
+                              • <MapPin className="w-3 h-3 ml-1" /> {post.location}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${badge.className}`}>
+                        <BadgeIcon className="w-3 h-3" />
+                        <span>{badge.label}</span>
+                      </span>
+                      {post.audience && post.audience !== 'public' && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-dashed border-muted-foreground/40 text-muted-foreground">
+                          {post.audience === 'followers' ? 'Followers only' : 'Community'}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => setReportingPostId(post.id)}
+                        className="text-muted-foreground hover:text-red-400 p-1"
+                        title="Report post"
+                      >
+                        <Flag className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="post-badge">{post.post_type}</span>
+                  {/* Title & Content */}
+                  <div className="space-y-2">
+                    {post.title && <h3 className="text-base font-bold text-foreground leading-snug">{post.title}</h3>}
+                    <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{renderContentWithHighlights(post.content)}</p>
+                  </div>
+
+                  {/* Media (Image or Video) if present */}
+                  {post.images && post.images.length > 0 && (
+                    isVideoUrl(post.images[0]) ? (
+                      <div className="rounded-2xl overflow-hidden border border-border/80 bg-black/60 flex items-center justify-center shadow-sm">
+                        <video 
+                          src={post.images[0]} 
+                          controls 
+                          playsInline 
+                          preload="metadata"
+                          className="w-full max-h-[600px] object-contain rounded-2xl bg-black"
+                        />
+                      </div>
+                    ) : (
+                      <div 
+                        onClick={() => setPreviewImage(post.images[0])}
+                        className="rounded-2xl overflow-hidden border border-border/80 bg-secondary/30 flex items-center justify-center cursor-pointer group hover:border-primary/50 transition-all shadow-sm"
+                        title="Click to view full image"
+                      >
+                        <img 
+                          src={post.images[0]} 
+                          alt="Post visual" 
+                          className="w-full max-h-[600px] object-contain rounded-2xl transition-transform duration-200 group-hover:scale-[1.005]" 
+                          loading="lazy"
+                        />
+                      </div>
+                    )
+                  )}
+
+                  {/* Poll Options if present */}
+                  {post.post_type === 'POLL' && post.poll_options.length > 0 && (
+                    <div className="space-y-2.5 bg-secondary/50 p-4 rounded-2xl border border-border">
+                      {post.poll_options.map((opt) => (
+                        <button
+                          key={opt.id}
+                          onClick={() => handleVotePoll(post.id, opt.id)}
+                          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                            opt.user_voted
+                              ? 'bg-primary/20 border border-primary text-primary'
+                              : 'bg-card border border-border text-muted-foreground hover:border-primary/40'
+                          }`}
+                        >
+                          <span>{opt.option_text}</span>
+                          <span className="text-xs font-bold text-muted-foreground">
+                            {opt.votes_count} vote{opt.votes_count !== 1 ? 's' : ''}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Interaction Footer */}
+                  <div className="pt-4 mt-1 border-t border-border flex items-center justify-between text-sm text-muted-foreground">
                     <button
-                      onClick={() => setReportingPostId(post.id)}
-                      className="text-muted-foreground hover:text-red-400 p-1"
-                      title="Report post"
+                      onClick={() => handleLikeToggle(post.id)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+                        post.user_liked ? 'text-primary font-bold bg-primary/10' : 'hover:text-foreground hover:bg-secondary'
+                      }`}
                     >
-                      <Flag className="w-3.5 h-3.5" />
+                      <Heart className={`w-4 h-4 ${post.user_liked ? 'fill-primary' : ''}`} />
+                      <span>{post.likes_count}</span>
+                    </button>
+
+                    <button
+                      onClick={() => openComments(post)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-foreground hover:bg-secondary transition-colors"
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                      <span>{post.comments_count} Comments</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleSaveToggle(post.id)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+                        post.user_saved ? 'text-primary font-bold bg-primary/10' : 'hover:text-foreground hover:bg-secondary'
+                      }`}
+                    >
+                      <Bookmark className={`w-4 h-4 ${post.user_saved ? 'fill-primary' : ''}`} />
+                      <span>{post.user_saved ? 'Saved' : 'Save'}</span>
+                    </button>
+                    <button onClick={() => handleShare(post)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-primary hover:bg-secondary transition-colors" title="Share post">
+                      <Send className="w-4 h-4" />
+                      <span>Share</span>
                     </button>
                   </div>
-                </div>
-
-                {/* Title & Content */}
-                {post.title && <h3 className="text-base font-bold text-foreground uppercase">{post.title}</h3>}
-                <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">{renderContentWithHighlights(post.content)}</p>
-
-                {/* Image if present */}
-                {post.images && post.images.length > 0 && (
-                  <div className="rounded-xl overflow-hidden border border-border max-h-80 bg-black/20 dark:bg-black/40">
-                    <img src={post.images[0]} alt="Post visual" className="w-full h-full object-cover" />
-                  </div>
-                )}
-
-                {/* Poll Options if present */}
-                {post.post_type === 'POLL' && post.poll_options.length > 0 && (
-                  <div className="space-y-2 bg-card p-3 rounded-xl border border-border">
-                    {post.poll_options.map((opt) => (
-                      <button
-                        key={opt.id}
-                        onClick={() => handleVotePoll(post.id, opt.id)}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                          opt.user_voted
-                            ? 'bg-primary/20 border border-primary text-primary'
-                            : 'bg-secondary border border-border text-muted-foreground hover:border-primary/40'
-                        }`}
-                      >
-                        <span>{opt.option_text}</span>
-                        <span className="text-[10px] font-bold text-muted-foreground">
-                          {opt.votes_count} vote{opt.votes_count !== 1 ? 's' : ''}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Interaction Footer */}
-                <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-                  <button
-                    onClick={() => handleLikeToggle(post.id)}
-                    className={`flex items-center gap-1.5 transition-colors ${
-                      post.user_liked ? 'text-primary font-bold' : 'hover:text-foreground'
-                    }`}
-                  >
-                    <Heart className={`w-4 h-4 ${post.user_liked ? 'fill-primary' : ''}`} />
-                    <span>{post.likes_count}</span>
-                  </button>
-
-                  <button
-                    onClick={() => openComments(post)}
-                    className="flex items-center gap-1.5 hover:text-foreground transition-colors"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    <span>{post.comments_count} Comments</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleSaveToggle(post.id)}
-                    className={`flex items-center gap-1.5 transition-colors ${
-                      post.user_saved ? 'text-primary font-bold' : 'hover:text-foreground'
-                    }`}
-                  >
-                    <Bookmark className={`w-4 h-4 ${post.user_saved ? 'fill-primary' : ''}`} />
-                    <span>{post.user_saved ? 'Saved' : 'Save'}</span>
-                  </button>
-                </div>
-              </article>
-            ))}
+                </SpotlightCard>
+              );
+            })}
           </div>
         )}
 
         {/* Create Post Modal */}
         {showCreateModal && (
           <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
+            <div className="bg-card border border-border rounded-3xl w-full max-w-lg p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-thin">
               <div className="flex items-center justify-between border-b border-border pb-3">
-                <h3 className="text-base font-bold text-foreground uppercase">Create Post</h3>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Create a Post</h3>
+                  <p className="text-xs text-muted-foreground">Share an update, find collaborators, or ask questions</p>
+                </div>
                 <button onClick={() => setShowCreateModal(false)} className="text-xs text-muted-foreground hover:text-foreground">✕</button>
               </div>
               <form onSubmit={handleCreatePost} className="space-y-4">
-                <div className="flex gap-2 mb-2 border-b border-border pb-3 overflow-x-auto scrollbar-thin">
-                  {[
-                    { type: 'COLLAB', icon: Handshake },
-                    { type: 'IDEA', icon: Lightbulb },
-                    { type: 'HELP', icon: Info },
-                    { type: 'WIN', icon: Trophy }
-                  ].map(({ type, icon: Icon }) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => {
-                        setNewPostType(type as any);
-                        setShowPoll(false);
-                      }}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex-shrink-0 flex items-center gap-1.5 border ${
-                        newPostType === type && !showPoll ? 'bg-primary/10 text-primary border-primary' : 'bg-secondary text-muted-foreground border-transparent hover:border-border hover:text-foreground'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      {type}
-                    </button>
-                  ))}
+                {/* Category Selection */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[11px] font-bold text-foreground">Choose Category</label>
+                    <span className="text-[10px] font-semibold text-primary">Required</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { type: 'COLLAB', label: 'Collaboration', desc: 'Find teammates', icon: Handshake },
+                      { type: 'IDEA', label: 'Project Idea', desc: 'Share a concept', icon: Lightbulb },
+                      { type: 'HELP', label: 'Ask for Help', desc: 'Get assistance', icon: Info },
+                      { type: 'WIN', label: 'Win / Milestone', desc: 'Celebrate wins', icon: Trophy }
+                    ].map(({ type, label, desc, icon: Icon }) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => {
+                          setNewPostType(type as any);
+                          setShowPoll(false);
+                        }}
+                        className={`p-2.5 rounded-xl text-left transition-all border flex flex-col justify-between ${
+                          newPostType === type && !showPoll
+                            ? 'bg-primary/10 text-primary border-primary ring-1 ring-primary/40'
+                            : 'bg-secondary text-muted-foreground border-border hover:text-foreground hover:border-primary/40'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 font-bold text-xs">
+                          <Icon className="w-3.5 h-3.5" />
+                          <span>{label}</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground mt-0.5">{desc}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-3">
-                  <input
-                    type="text"
-                    placeholder="Subject or Title (optional)"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    className="w-full bg-transparent text-sm text-foreground placeholder-muted-foreground font-bold focus:outline-none border-b border-border pb-2"
-                  />
+                  {/* Title (Optional) */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="font-semibold text-foreground">Headline or Title</span>
+                      <span className="text-[10px] text-muted-foreground font-medium">Optional</span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="e.g. Looking for React developer for autonomous robotics project"
+                      value={newTitle}
+                      onChange={(e) => setNewTitle(e.target.value)}
+                      className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                    />
+                  </div>
 
-                  <textarea
-                    rows={4}
-                    required
-                    placeholder="What do you want to share with the nexus?"
-                    value={newContent}
-                    onChange={(e) => setNewContent(e.target.value)}
-                    className="w-full bg-transparent text-xs text-foreground placeholder-muted-foreground focus:outline-none resize-none"
-                  />
+                  {/* Content (Required) */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="font-semibold text-foreground">Post Content</span>
+                      <span className="text-[10px] text-primary font-semibold">Required</span>
+                    </div>
+                    <textarea
+                      rows={4}
+                      required
+                      placeholder="Describe what you are working on, what help you need, or what you want to share with fellow students..."
+                      value={newContent}
+                      onChange={(e) => setNewContent(e.target.value)}
+                      className="w-full bg-secondary border border-border rounded-xl p-3 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
+                    />
+                  </div>
                   
                   {showLocationInput && (
-                    <div className="relative mt-2">
-                      <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <input
-                        type="text"
-                        placeholder="Where are you?"
-                        value={newLocation}
-                        onChange={(e) => setNewLocation(e.target.value)}
-                        className="w-full bg-secondary text-sm text-foreground placeholder-muted-foreground pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-primary transition-all"
-                      />
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="font-semibold text-foreground">Location</span>
+                        <span className="text-[10px] text-muted-foreground font-medium">Optional</span>
+                      </div>
+                      <div className="relative">
+                        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="e.g. Delhi, Campus, Online"
+                          value={newLocation}
+                          onChange={(e) => setNewLocation(e.target.value)}
+                          className="w-full bg-secondary text-xs text-foreground placeholder-muted-foreground pl-9 pr-3 py-2 rounded-xl border border-border focus:outline-none focus:border-primary"
+                        />
+                      </div>
                     </div>
                   )}
 
                   {newImageUrl && (
-                    <div className="relative inline-block mt-2">
-                      <img src={newImageUrl} alt="Attachment" className="max-h-40 rounded-xl border border-border object-cover" />
-                      <button type="button" onClick={() => setNewImageUrl('')} className="absolute top-2 right-2 bg-black/60 text-white rounded-full p-1 hover:bg-black">
-                        <X className="w-3 h-3" />
+                    <div className="relative inline-block mt-2 max-w-full">
+                      <div className="rounded-xl overflow-hidden border border-border bg-secondary/40 flex items-center justify-center p-1">
+                        {isVideoUrl(newImageUrl) ? (
+                          <video src={newImageUrl} controls className="max-h-56 max-w-full rounded-lg bg-black" />
+                        ) : (
+                          <img src={newImageUrl} alt="Attachment" className="max-h-56 max-w-full object-contain rounded-lg" />
+                        )}
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewImageUrl('')} 
+                        className="absolute top-3 right-3 bg-black/70 hover:bg-black text-white rounded-full p-1.5 shadow-md transition-colors"
+                        title="Remove media"
+                      >
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   )}
 
                   {showPoll && (
-                    <div className="space-y-3 mt-4 p-4 bg-secondary/50 rounded-2xl border border-border">
-                      <div className="flex items-center gap-2 mb-2 text-primary">
-                        <BarChart2 className="w-4 h-4" />
-                        <label className="text-xs font-bold uppercase tracking-wider">Create a Poll</label>
+                    <div className="space-y-3 p-4 bg-secondary/50 rounded-2xl border border-border">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-primary font-bold text-xs">
+                          <BarChart2 className="w-4 h-4" />
+                          <span>Create a Community Poll</span>
+                        </div>
+                        <span className="text-[10px] text-primary font-semibold">Min 2 choices required</span>
                       </div>
                       {pollOptions.map((opt, i) => (
                         <div key={i} className="flex gap-2 items-center">
                           <input
                             type="text"
-                            placeholder={`Choice ${i + 1}`}
+                            placeholder={`Choice ${i + 1} ${i < 2 ? '(Required)' : '(Optional)'}`}
                             value={opt}
                             onChange={(e) => {
                               const copy = [...pollOptions];
                               copy[i] = e.target.value;
                               setPollOptions(copy);
                             }}
-                            className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary transition-colors"
+                            className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors"
                           />
                           {pollOptions.length > 2 && (
                             <button
@@ -517,11 +760,54 @@ export const FeedPage: React.FC = () => {
                     )}
                   </div>
 
+                  {/* Audience Selector (non-public options are members-only) */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-semibold text-muted-foreground">Audience:</span>
+                    {(['public', 'followers', 'community'] as const).map((a) => {
+                      const disabled = a !== 'public' && !isPaidMember;
+                      const active = audience === a;
+                      return (
+                        <button
+                          key={a}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            setAudience(a);
+                            if (a === 'community' && !communityId && mySchools.length > 0) {
+                              setCommunityId(mySchools[0].id);
+                            }
+                          }}
+                          title={disabled ? 'Members only' : ''}
+                          className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                            active ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
+                          } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          {a === 'public' ? 'Public' : a === 'followers' ? 'Followers' : 'Community'}
+                        </button>
+                      );
+                    })}
+                    {audience === 'community' && (
+                      <select
+                        value={communityId ?? ''}
+                        onChange={(e) => setCommunityId(Number(e.target.value))}
+                        className="bg-secondary border border-border rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                      >
+                        <option value="" disabled>Select community</option>
+                        {mySchools.map((s: any) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    {!isPaidMember && (
+                      <span className="text-[10px] text-muted-foreground">Upgrade to post to followers / community</span>
+                    )}
+                  </div>
+
                   <div className="flex items-center justify-between">
                     <div className="flex gap-2">
-                      <label className="text-primary hover:text-primary/80 cursor-pointer p-2 rounded-full hover:bg-primary/10 transition-colors relative" title="Upload Media">
+                      <label className="text-primary hover:text-primary/80 cursor-pointer p-2 rounded-full hover:bg-primary/10 transition-colors relative" title="Upload Photo or Video">
                         <ImageIcon className="w-5 h-5" />
-                        <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleImageUpload} disabled={isUploadingImage} />
+                        <input type="file" accept="image/*,video/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleImageUpload} disabled={isUploadingImage} />
                       </label>
                       <button
                         type="button"
@@ -541,7 +827,7 @@ export const FeedPage: React.FC = () => {
                         </button>
                         {showEmojiPicker && (
                           <div className="absolute bottom-full left-0 mb-2 z-50">
-                            <EmojiPicker onEmojiClick={(e) => setNewContent(prev => prev + e.emoji)} theme="auto" />
+                            <EmojiPicker onEmojiClick={(e) => setNewContent(prev => prev + e.emoji)} theme={Theme.AUTO} />
                           </div>
                         )}
                       </div>
@@ -563,73 +849,229 @@ export const FeedPage: React.FC = () => {
         </div>
       )}
 
-        {/* Comments Modal */}
+        {/* Comments Modal - YouTube & Instagram Style */}
         {activeCommentPost && (
-          <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-xl p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
-              <div className="flex items-center justify-between border-b border-border pb-3">
-                <h3 className="text-base font-bold text-foreground uppercase">Discussion</h3>
-                <button onClick={() => setActiveCommentPost(null)} className="text-xs text-muted-foreground hover:text-foreground">✕</button>
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-3xl w-full max-w-xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card/80 backdrop-blur-sm shrink-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-foreground">Comments</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary border border-primary/20">
+                    {comments.reduce((acc, curr) => acc + 1 + (curr.replies?.length || 0), 0)}
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    setActiveCommentPost(null);
+                    setReplyParentId(null);
+                    setReplyingToUser(null);
+                  }}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              {/* Comments List */}
-              <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+              {/* Post audience indicator (post detail) */}
+              {activeCommentPost.audience && activeCommentPost.audience !== 'public' && (
+                <div className="px-6 py-2 border-b border-border bg-secondary/30 text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5" />
+                  Posted to {activeCommentPost.audience === 'followers' ? 'your Followers' : 'a Community'} only
+                </div>
+              )}
+
+              {/* Comments Scrollable List */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
                 {comments.length === 0 ? (
-                  <p className="text-center text-xs text-muted-foreground py-8">Be the first student to start a discussion.</p>
+                  <div className="text-center py-12 space-y-2">
+                    <MessageSquare className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+                    <p className="text-sm font-semibold text-foreground">No comments yet</p>
+                    <p className="text-xs text-muted-foreground">Start the conversation by adding the first comment.</p>
+                  </div>
                 ) : (
-                  comments.map((c) => (
-                    <div key={c.id} className="bg-secondary p-3 rounded-xl border border-border space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={c.author_avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.author_username}`}
-                            alt={c.author_username}
-                            className="w-6 h-6 rounded-full border border-border object-cover"
+                  comments.map((c) => {
+                    const hasReplies = c.replies && c.replies.length > 0;
+                    const isExpanded = !!expandedReplies[c.id];
+
+                    return (
+                      <div key={c.id} className="space-y-2">
+                        {/* Parent Comment */}
+                        <div className="flex items-start gap-3">
+                          <UserAvatar
+                            src={c.author_avatar}
+                            username={c.author_username}
+                            membership={c.author_membership}
+                            size={34}
                           />
-                          <span className="text-xs font-bold text-foreground">{c.author_name}</span>
-                          <span className="text-[10px] text-primary">@{c.author_username}</span>
-                        </div>
-                        <span className="text-[9px] text-muted-foreground">{new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      <p className="text-xs text-foreground/90 pl-8">{c.content}</p>
-
-                      {/* Render nested replies */}
-                      {c.replies && c.replies.length > 0 && (
-                        <div className="pl-8 pt-2 space-y-2 border-l border-border ml-4">
-                          {c.replies.map((reply) => (
-                            <div key={reply.id} className="bg-secondary p-2 rounded-lg text-xs">
-                              <span className="font-bold text-primary">@{reply.author_username}: </span>
-                              <span className="text-muted-foreground">{reply.content}</span>
+                          <div className="flex-1 min-w-0">
+                            {/* Author & Timestamp */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-foreground hover:underline cursor-pointer flex items-center gap-1.5">
+                                {c.author_name || c.author_username}
+                                <MembershipBadge membership={c.author_membership} size={13} />
+                              </span>
+                              <span className="text-[11px] text-muted-foreground">@{c.author_username}</span>
+                              <span className="text-[10px] text-muted-foreground">• {timeAgo(c.created_at)}</span>
                             </div>
-                          ))}
-                        </div>
-                      )}
 
-                      <button
-                        onClick={() => setReplyParentId(c.id)}
-                        className="text-[10px] font-bold text-primary pl-8"
-                      >
-                        Reply
-                      </button>
-                    </div>
-                  ))
+                            {/* Content */}
+                            <p className="text-xs text-foreground/90 mt-1 whitespace-pre-wrap leading-relaxed">
+                              {renderContentWithHighlights(c.content)}
+                            </p>
+
+                            {/* Interaction Row (Like / Reply) */}
+                            <div className="flex items-center gap-4 mt-2 text-xs">
+                              {/* Like Button (unified reaction) */}
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCommentLike(c.id)}
+                                className={`flex items-center gap-1.5 py-1 transition-colors ${
+                                  c.user_liked ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                <Heart className={`w-3.5 h-3.5 ${c.user_liked ? 'fill-primary text-primary' : ''}`} />
+                                <span className="text-[11px]">{(c.likes_count ?? 0) > 0 ? c.likes_count : ''}</span>
+                              </button>
+
+                              {/* Reply Trigger */}
+                              <button
+                                type="button"
+                                onClick={() => startReply(c.id, c.author_username)}
+                                className="text-[11px] font-bold text-muted-foreground hover:text-primary transition-colors py-1"
+                              >
+                                Reply
+                              </button>
+                            </div>
+
+                            {/* Collapsible Nested Replies Toggle */}
+                            {hasReplies && (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleReplies(c.id)}
+                                  className="flex items-center gap-2 text-xs font-bold text-primary hover:text-primary/80 transition-colors py-1"
+                                >
+                                  <span className="w-5 h-[1px] bg-primary/40 inline-block"></span>
+                                  {isExpanded ? (
+                                    <>
+                                      <ChevronUp className="w-3.5 h-3.5" /> Hide {c.replies.length} {c.replies.length === 1 ? 'reply' : 'replies'}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ChevronDown className="w-3.5 h-3.5" /> View {c.replies.length} {c.replies.length === 1 ? 'reply' : 'replies'}
+                                    </>
+                                  )}
+                                </button>
+
+                                {/* Expanded Replies List */}
+                                {isExpanded && (
+                                  <div className="mt-2 pl-4 space-y-3 border-l-2 border-border/80 ml-2">
+                                    {c.replies.map((reply) => {
+                                       return (
+                                        <div key={reply.id} className="flex items-start gap-2.5 pt-1">
+                                          <UserAvatar
+                                            src={reply.author_avatar}
+                                            username={reply.author_username}
+                                            membership={reply.author_membership}
+                                            size={26}
+                                          />
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <span className="text-xs font-bold text-foreground hover:underline cursor-pointer flex items-center gap-1.5">
+                                                {reply.author_name || reply.author_username}
+                                                <MembershipBadge membership={reply.author_membership} size={12} />
+                                              </span>
+                                              <span className="text-[10px] text-muted-foreground">@{reply.author_username}</span>
+                                              <span className="text-[9px] text-muted-foreground">• {timeAgo(reply.created_at)}</span>
+                                            </div>
+                                            <p className="text-xs text-foreground/90 mt-0.5 whitespace-pre-wrap leading-relaxed">
+                                              {renderContentWithHighlights(reply.content)}
+                                            </p>
+
+                                            <div className="flex items-center gap-3 mt-1.5 text-xs">
+                                              <button
+                                                type="button"
+                                                onClick={() => handleToggleCommentLike(reply.id)}
+                                                className={`flex items-center gap-1 py-0.5 transition-colors ${
+                                                  reply.user_liked ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
+                                                }`}
+                                              >
+                                                 <Heart className={`w-3 h-3 ${reply.user_liked ? 'fill-primary text-primary' : ''}`} />
+                                                <span className="text-[10px]">{(reply.likes_count ?? 0) > 0 ? reply.likes_count : ''}</span>
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={() => startReply(c.id, reply.author_username)}
+                                                className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors py-0.5"
+                                              >
+                                                Reply
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
-              {/* Add Comment Form */}
-              <form onSubmit={handleAddComment} className="pt-3 border-t border-border flex gap-2">
-                <input
-                  type="text"
-                  required
-                  placeholder={replyParentId ? "Replying to comment..." : "Write a comment..."}
-                  value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
-                  className="flex-1 bg-secondary border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
-                />
-                <button type="submit" className="button button-small button-solid">
-                  Send
-                </button>
-              </form>
+              {/* Bottom Sticky Input & Active Reply Banner */}
+              <div className="p-4 border-t border-border bg-card/95 backdrop-blur-md shrink-0">
+                {/* Active Reply Banner */}
+                {replyingToUser && (
+                  <div className="flex items-center justify-between bg-primary/10 border border-primary/20 rounded-xl px-3 py-1.5 mb-2 text-xs">
+                    <div className="flex items-center gap-1.5 text-primary font-semibold">
+                      <CornerDownRight className="w-3.5 h-3.5" />
+                      <span>Replying to <b className="font-bold">@{replyingToUser}</b></span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={cancelReply}
+                      className="p-1 text-muted-foreground hover:text-foreground rounded-full hover:bg-card transition-colors"
+                      title="Cancel reply"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Comment Input Form */}
+                <form onSubmit={handleAddComment} className="flex items-center gap-3">
+                  <UserAvatar
+                    src={user?.profile?.avatar_url}
+                    username={user?.username}
+                    size={34}
+                  />
+                  <div className="flex-1 relative flex items-center">
+                    <input
+                      type="text"
+                      required
+                      placeholder={replyingToUser ? `Write a reply to @${replyingToUser}...` : "Add a comment..."}
+                      value={commentInput}
+                      onChange={(e) => setCommentInput(e.target.value)}
+                      className="w-full bg-secondary border border-border rounded-full pl-4 pr-12 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!commentInput.trim()}
+                      className="absolute right-1.5 p-1.5 rounded-full bg-primary text-primary-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:opacity-90 transition-all"
+                      title="Post comment"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
         )}
@@ -637,7 +1079,7 @@ export const FeedPage: React.FC = () => {
         {/* Report Modal */}
         {reportingPostId && (
           <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+            <div className="bg-card border border-border rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-thin">
               <h3 className="text-base font-bold text-foreground uppercase">Report Post</h3>
               <form onSubmit={handleReport} className="space-y-4">
                 <div>
@@ -675,6 +1117,37 @@ export const FeedPage: React.FC = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {/* Image Preview Lightbox Modal */}
+        {previewImage && (
+          <div 
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div className="relative max-w-4xl max-h-[90vh] flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+              <img 
+                src={previewImage} 
+                alt="Enlarged preview" 
+                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10" 
+              />
+              <button 
+                onClick={() => setPreviewImage(null)}
+                className="absolute -top-3 -right-3 bg-card hover:bg-card/80 border border-border text-foreground p-2 rounded-full shadow-lg transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+        {sharePost && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between"><h3 className="font-bold text-foreground">Share post</h3><button onClick={() => setSharePost(null)} className="text-muted-foreground">✕</button></div>
+              <button onClick={() => shareExternally(sharePost)} className="w-full button button-ghost">Share outside EduNexus</button>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Recent chats and groups</p>{shareConversations.length === 0 ? <p className="text-xs text-muted-foreground">No conversations yet. Start a chat from Find Your Next Collaborator.</p> : <div className="max-h-60 overflow-y-auto space-y-2">{shareConversations.map((conversation) => { const person = conversation.other_user; const name = conversation.is_group ? (conversation.name || `Group (${conversation.member_count || 0})`) : (person?.profile?.full_name || person?.username || `Conversation ${conversation.id}`); const school = person?.profile?.school; return <button disabled={sharing} key={conversation.id} onClick={() => shareToConversation(conversation)} className="w-full text-left px-3 py-3 rounded-xl bg-secondary hover:bg-primary/10 border border-border text-xs font-semibold text-foreground"><span className="inline-flex items-center gap-2"><img src={conversation.is_group ? (conversation.avatar_url || '') : (person?.profile?.avatar_url || '')} className="w-8 h-8 rounded-full bg-primary/10 object-cover"/><span>{name}<span className="block text-[10px] font-normal text-muted-foreground">{conversation.is_group ? `${conversation.member_count || 0} members` : [school, person?.username ? `@${person.username}` : ''].filter(Boolean).join(' · ')}</span></span></span></button>; })}</div>}</div>
             </div>
           </div>
         )}

@@ -286,6 +286,7 @@ export const AdminPage: React.FC = () => {
                       <option value="Competitions">Competitions</option>
                       <option value="Summer Programs">Summer Programs</option>
                       <option value="Internships">Internships</option>
+                      <option value="Jobs">Jobs</option>
                     </select>
                   </div>
                 </div>

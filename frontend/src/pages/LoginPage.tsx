@@ -39,7 +39,8 @@ export const LoginPage: React.FC = () => {
       <div className="w-full max-w-md bg-card border border-border rounded-3xl p-8 shadow-2xl relative z-10">
         <div className="text-center mb-8">
           <Link to="/" className="inline-block mb-4">
-            <img src="/edu-nexus-logo.png" alt="Edu Nexus" className="h-9 mx-auto object-contain" />
+            <img src="/edu-nexus-logo-light.png" alt="Edu Nexus" className="h-9 mx-auto object-contain logo-for-light" />
+            <img src="/edu-nexus-logo.png" alt="Edu Nexus" className="h-9 mx-auto object-contain logo-for-dark" />
           </Link>
           <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground">Welcome Back</h2>
           <p className="text-xs text-muted-foreground mt-1">Sign in to your Edu Nexus student account</p>
@@ -89,32 +90,7 @@ export const LoginPage: React.FC = () => {
           </button>
         </form>
 
-        {/* Quick Demo Logins for fast testing */}
-        <div className="mt-8 pt-6 border-t border-border">
-          <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider text-center mb-3">Quick Demo Sign-In</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => {
-                setEmailOrUsername('aarav');
-                setPassword('password123');
-              }}
-              className="px-3 py-2 rounded-xl bg-secondary border border-border text-[11px] font-semibold text-primary hover:bg-secondary transition-colors"
-            >
-              Demo Student (Aarav)
-            </button>
-            <button
-              onClick={() => {
-                setEmailOrUsername('admin');
-                setPassword('admin123');
-              }}
-              className="px-3 py-2 rounded-xl bg-secondary border border-border text-[11px] font-semibold text-primary hover:bg-secondary transition-colors"
-            >
-              Demo Admin
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-6 text-center text-xs text-muted-foreground">
+        <div className="mt-8 pt-6 border-t border-border text-center text-xs text-muted-foreground">
           Don't have an account?{' '}
           <Link to="/signup" className="text-primary font-bold hover:underline">
             Create Profile

@@ -1,0 +1,1119 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List, Any, Optional
+import secrets
+import uuid
+from datetime import datetime, timezone, timedelta
+
+from backend.app import models, schemas
+from backend.app.auth.security import get_current_user, get_current_user_optional, get_password_hash
+from backend.app.database import get_db
+from backend.app import email as mail
+from backend.app.utils import format_user_out
+import json
+
+router = APIRouter()
+
+
+def _school_admins(db: Session, school_id: int):
+    return db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
+    ).all()
+
+
+def _notify_school_admins(db, school_id, type, title, body, link=None):
+    for m in _school_admins(db, school_id):
+        admin = db.query(models.User).filter(models.User.id == m.user_id).first()
+        if admin:
+            mail.notify(db, admin, type, title, body, link)
+
+
+@router.get("/my", response_model=List[schemas.SchoolOut])
+def get_my_schools(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get schools the current user is a member of"""
+    school_members = db.query(models.SchoolMember).filter(models.SchoolMember.user_id == current_user.id).all()
+    return [member.school for member in school_members if member.school]
+
+
+@router.get("/my-invitations", response_model=List[schemas.SchoolInvitationOut])
+def get_my_school_invitations(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get all pending school invitations for the current user."""
+    invites = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.user_id == current_user.id,
+        models.SchoolInvitation.status == 'pending'
+    ).order_by(models.SchoolInvitation.created_at.desc()).all()
+    return invites
+
+
+@router.get("", response_model=List[schemas.SchoolOut])
+@router.get("/", response_model=List[schemas.SchoolOut])
+def get_all_schools(
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_current_user_optional)
+):
+    """Directory of schools. Active schools with members/admins or all schools for platform admins."""
+    if current_user and current_user.role == 'admin':
+        return db.query(models.School).order_by(models.School.name.asc()).all()
+    active_school_ids = [r[0] for r in db.query(models.SchoolMember.school_id).distinct().all()]
+    if not active_school_ids:
+        return []
+    return db.query(models.School).filter(models.School.id.in_(active_school_ids)).order_by(models.School.name.asc()).all()
+
+
+@router.get("/suggestions", response_model=List[schemas.SchoolSuggestionOut])
+def list_school_suggestions(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """List pending school suggestions (platform admin only)."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    return db.query(models.SchoolSuggestion).filter(models.SchoolSuggestion.status == 'pending').order_by(models.SchoolSuggestion.created_at.desc()).all()
+
+
+@router.post("/suggestions", response_model=schemas.SchoolSuggestionOut)
+def suggest_school(
+    data: schemas.SchoolSuggestionCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Students/teachers can suggest their school be added to the platform."""
+    suggestion = models.SchoolSuggestion(
+        name=data.name,
+        description=data.description,
+        contact_email=data.contact_email,
+        city=data.city,
+        country=data.country,
+        requester_id=current_user.id,
+    )
+    db.add(suggestion)
+    db.commit()
+    db.refresh(suggestion)
+
+    admins = db.query(models.User).filter(models.User.role == 'admin').all()
+    for admin in admins:
+        mail.notify(
+            db, admin, 'school_suggestion',
+            'New school suggestion',
+            f"{current_user.username} suggested adding '{data.name}' to Edu Nexus.",
+            None
+        )
+    return suggestion
+
+
+@router.post("/suggestions/{suggestion_id}/approve", response_model=schemas.SchoolOut)
+def approve_school_suggestion(
+    suggestion_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Platform admin approves a suggestion and creates the school."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    suggestion = db.query(models.SchoolSuggestion).filter(models.SchoolSuggestion.id == suggestion_id).first()
+    if not suggestion or suggestion.status != 'pending':
+        raise HTTPException(status_code=404, detail="Suggestion not found or already processed")
+
+    school = models.School(name=suggestion.name, description=suggestion.description)
+    db.add(school)
+    db.commit()
+    db.refresh(school)
+
+    suggestion.status = 'approved'
+    db.commit()
+
+    if suggestion.contact_email:
+        contact_email = suggestion.contact_email.lower()
+        admin_user = db.query(models.User).filter(models.User.email == contact_email).first()
+        if not admin_user:
+            # Auto-provision the contact as the school's first admin and email
+            # them a secure setup link. This removes the need for a manual
+            # admin-creation step by a platform admin.
+            local = contact_email.split('@')[0]
+            base_username = ''.join(c for c in local if c.isalnum() or c == '_') or f"school{ school.id }"
+            username = base_username[:30]
+            suffix = 1
+            while db.query(models.User).filter(models.User.username == username).first():
+                username = f"{base_username[:26]}_{suffix}"
+                suffix += 1
+
+            setup_token = str(uuid.uuid4())
+            admin_user = models.User(
+                username=username,
+                email=contact_email,
+                hashed_password=get_password_hash(secrets.token_urlsafe(16)),
+                role='student',
+                is_email_verified=True,
+                reset_password_token=setup_token,
+                reset_password_expires=datetime.now(timezone.utc) + timedelta(days=7),
+            )
+            db.add(admin_user)
+            db.flush()
+            avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={username}"
+            db.add(models.Profile(
+                user_id=admin_user.id,
+                full_name=f"{suggestion.name} Admin",
+                avatar_url=avatar_url,
+                school=suggestion.name,
+            ))
+            db.add(models.SchoolMember(school_id=school.id, user_id=admin_user.id, role='admin'))
+            db.commit()
+            mail.send_account_setup_email(contact_email, f"{suggestion.name} Admin", suggestion.name, setup_token)
+
+        mail.send_notification_email(
+            contact_email,
+            "Your school is now on Edu Nexus",
+            f"Great news! '{suggestion.name}' has been added to Edu Nexus. Check your email for your admin login to customize the school hub and invite students."
+        )
+    return school
+
+
+@router.post("", response_model=schemas.SchoolOut)
+@router.post("/", response_model=schemas.SchoolOut)
+def create_school(
+    school_in: schemas.SchoolCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Create a new school. Only platform admins can do this."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    db_school = models.School(**school_in.model_dump())
+    db.add(db_school)
+    db.commit()
+    db.refresh(db_school)
+
+    member = models.SchoolMember(school_id=db_school.id, user_id=current_user.id, role='admin')
+    db.add(member)
+    db.commit()
+
+    return db_school
+
+
+@router.post("/admins", response_model=schemas.UserOut)
+def create_school_admin(
+    data: schemas.SchoolAdminCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Platform admin creates a school-admin account and assigns them to a school."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    school = db.query(models.School).filter(models.School.id == data.school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    existing_email = db.query(models.User).filter(models.User.email == data.email.lower()).first()
+    if existing_email:
+        pending_inv = db.query(models.SchoolInvitation).filter(
+            models.SchoolInvitation.school_id == school.id,
+            models.SchoolInvitation.user_id == existing_email.id,
+            models.SchoolInvitation.role == 'admin',
+            models.SchoolInvitation.status.in_(['pending', 'declined', 'expired'])
+        ).first()
+        # Older versions created the provisional user before recording the invitation.
+        # An unconsumed setup token is authoritative: this is not an activated account.
+        unactivated = bool(existing_email.reset_password_token)
+        if unactivated and not pending_inv:
+            pending_inv = models.SchoolInvitation(
+                school_id=school.id, user_id=existing_email.id,
+                invited_by_id=current_user.id, role='admin', status='pending'
+            )
+            db.add(pending_inv)
+        if pending_inv and unactivated:
+            existing_email.reset_password_token = str(uuid.uuid4())
+            existing_email.reset_password_expires = datetime.now(timezone.utc) + timedelta(days=7)
+            pending_inv.status = 'pending'
+            db.commit()
+            mail.send_account_setup_email(existing_email.email, data.full_name or existing_email.profile.full_name, school.name, existing_email.reset_password_token)
+            return format_user_out(existing_email, existing_email.id, db)
+        raise HTTPException(status_code=400, detail="This email already belongs to an active EduNexus account.")
+    if db.query(models.User).filter(models.User.username == data.username.lower()).first():
+        raise HTTPException(status_code=400, detail="Username is already taken.")
+
+    # Never store/email a plaintext password. Generate a one-time setup token
+    # (reusing the reset-password mechanism) and email a "set password" link.
+    setup_token = str(uuid.uuid4())
+    new_user = models.User(
+        username=data.username.lower(),
+        email=data.email.lower(),
+        hashed_password=get_password_hash(secrets.token_urlsafe(16)),
+        role='student',
+        is_email_verified=True,
+        reset_password_token=setup_token,
+        reset_password_expires=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    db.add(new_user)
+    db.flush()
+
+    avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={new_user.username}"
+    db.add(models.Profile(user_id=new_user.id, full_name=data.full_name, avatar_url=avatar_url, school=school.name))
+
+    db.add(models.SchoolMember(school_id=school.id, user_id=new_user.id, role='admin'))
+    db.add(models.SchoolInvitation(school_id=school.id, user_id=new_user.id, invited_by_id=current_user.id, role='admin', status='pending'))
+    db.commit()
+    db.refresh(new_user)
+
+    mail.send_account_setup_email(new_user.email, data.full_name, school.name, setup_token)
+
+    return format_user_out(new_user, new_user.id, db)
+
+@router.post("/admin-invitations/{token}/reject")
+def reject_admin_invitation(token: str, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.reset_password_token == token).first()
+    if not user: raise HTTPException(status_code=404, detail="Invitation not found or expired")
+    inv = db.query(models.SchoolInvitation).filter(models.SchoolInvitation.user_id == user.id, models.SchoolInvitation.role == 'admin', models.SchoolInvitation.status == 'pending').first()
+    if not inv: raise HTTPException(status_code=400, detail="Invitation is no longer pending")
+    inv.status = 'declined'; db.commit()
+    return {"message": "Invitation declined"}
+
+
+@router.get("/{school_id}", response_model=schemas.SchoolOut)
+def get_school_details(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get school details"""
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id
+    ).first()
+    if not member and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not a member of this school")
+
+    return school
+
+
+@router.get("/{school_id}/members", response_model=List[schemas.SchoolMemberOut])
+def get_school_members(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get members of a school"""
+    return db.query(models.SchoolMember).filter(models.SchoolMember.school_id == school_id).all()
+
+@router.get("/{school_id}/invite-candidates")
+def get_invite_candidates(school_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school or not _school_staff(db, school_id, current_user):
+        raise HTTPException(status_code=403, detail='Only school staff can discover invite candidates')
+    member_ids = {m.user_id for m in db.query(models.SchoolMember).filter(models.SchoolMember.school_id == school_id).all()}
+    users = db.query(models.User).join(models.Profile, models.User.id == models.Profile.user_id).filter(models.User.is_banned == False, models.Profile.school.ilike(school.name)).limit(100).all()
+    return [format_user_out(u, current_user.id, db) for u in users if u.id not in member_ids and u.id != current_user.id]
+
+
+@router.post("/{school_id}/members", response_model=schemas.SchoolMemberOut)
+def add_school_member(
+    school_id: int,
+    member_in: schemas.SchoolMemberCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Add a member to a school (School admin only)"""
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role == 'admin'
+    ).first()
+
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    user_to_add = db.query(models.User).filter(models.User.id == member_in.user_id).first()
+    if not user_to_add:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    existing = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == member_in.user_id
+    ).first()
+
+    if existing:
+        existing.role = member_in.role
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    new_member = models.SchoolMember(
+        school_id=school_id,
+        user_id=member_in.user_id,
+        role=member_in.role
+    )
+    db.add(new_member)
+    db.commit()
+    db.refresh(new_member)
+    return new_member
+
+
+@router.get("/{school_id}/clubs", response_model=List[schemas.SchoolClubOut])
+def get_school_clubs(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    clubs = db.query(models.SchoolClub).filter(models.SchoolClub.school_id == school_id).all()
+    for club in clubs:
+        club.members_count = db.query(models.SchoolClubMember).filter(models.SchoolClubMember.club_id == club.id).count()
+    return clubs
+
+
+@router.post("/{school_id}/clubs", response_model=schemas.SchoolClubOut)
+def create_school_club(
+    school_id: int,
+    club_in: schemas.SchoolClubCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role == 'admin'
+    ).first()
+
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins can create clubs")
+
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    club = models.SchoolClub(school_id=school_id, **club_in.model_dump())
+    db.add(club)
+    db.commit()
+    db.refresh(club)
+    # Announce new clubs to every current school member.
+    members = db.query(models.SchoolMember).filter(models.SchoolMember.school_id == school_id).all()
+    for school_member in members:
+        recipient = db.query(models.User).filter(models.User.id == school_member.user_id).first()
+        if recipient and recipient.id != current_user.id:
+            mail.notify(db, recipient, 'school_club_created', f'New club at {school.name}', f'{club.name} was just created in your school. Join the club from School Hub.', '/app/school')
+    db.add(models.SchoolAnnouncement(school_id=school_id, author_id=current_user.id, title=f'New club: {club.name}', content=f'{club.name} is now open for members. {club.description or "Join from the Clubs tab in School Hub."}'))
+    db.commit()
+    return club
+
+
+@router.post("/{school_id}/clubs/{club_id}/join", response_model=schemas.SchoolClubMemberOut)
+def join_school_club(
+    school_id: int,
+    club_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Join a club (must be a member of the school)."""
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id
+    ).first()
+    if not member and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="You must be a member of this school to join its clubs")
+
+    club = db.query(models.SchoolClub).filter(models.SchoolClub.id == club_id).first()
+    if not club:
+        raise HTTPException(status_code=404, detail="Club not found")
+    if club.school_id != school_id:
+        raise HTTPException(status_code=400, detail="Club does not belong to this school")
+
+    existing = db.query(models.SchoolClubMember).filter(
+        models.SchoolClubMember.club_id == club_id,
+        models.SchoolClubMember.user_id == current_user.id
+    ).first()
+    if existing:
+        return existing
+
+    new_member = models.SchoolClubMember(club_id=club_id, user_id=current_user.id)
+    db.add(new_member)
+    db.commit()
+    db.refresh(new_member)
+    return new_member
+
+
+@router.get("/{school_id}/events", response_model=List[schemas.SchoolEventOut])
+def get_school_events(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    return db.query(models.SchoolEvent).filter(models.SchoolEvent.school_id == school_id).order_by(models.SchoolEvent.event_date.asc()).all()
+
+
+@router.post("/{school_id}/events", response_model=schemas.SchoolEventOut)
+def create_school_event(
+    school_id: int,
+    event_in: schemas.SchoolEventCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role == 'admin'
+    ).first()
+
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins can create events")
+
+    event = models.SchoolEvent(
+        school_id=school_id,
+        created_by_id=current_user.id,
+        **event_in.model_dump()
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.get("/{school_id}/announcements", response_model=List[schemas.SchoolAnnouncementOut])
+def get_school_announcements(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    return db.query(models.SchoolAnnouncement).filter(models.SchoolAnnouncement.school_id == school_id).order_by(models.SchoolAnnouncement.created_at.desc()).all()
+
+
+@router.post("/{school_id}/announcements", response_model=schemas.SchoolAnnouncementOut)
+def create_school_announcement(
+    school_id: int,
+    announcement_in: schemas.SchoolAnnouncementCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
+    ).first()
+
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins/ambassadors can create announcements")
+
+    announcement = models.SchoolAnnouncement(
+        school_id=school_id,
+        author_id=current_user.id,
+        **announcement_in.model_dump()
+    )
+    db.add(announcement)
+    db.commit()
+    db.refresh(announcement)
+    return announcement
+
+
+@router.post("/invitations/{invite_id}/accept", response_model=schemas.SchoolMemberOut)
+def accept_school_invitation(
+    invite_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Accept an invitation to join a school."""
+    inv = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.id == invite_id,
+        models.SchoolInvitation.user_id == current_user.id
+    ).first()
+    if not inv or inv.status != 'pending':
+        raise HTTPException(status_code=404, detail="Invitation not found or already processed")
+
+    inv.status = 'accepted'
+
+    # Check if already a member
+    existing = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == inv.school_id,
+        models.SchoolMember.user_id == current_user.id
+    ).first()
+    if not existing:
+        member = models.SchoolMember(
+            school_id=inv.school_id,
+            user_id=current_user.id,
+            role=inv.role or 'student'
+        )
+        db.add(member)
+    else:
+        member = existing
+        if inv.role:
+            member.role = inv.role
+
+    # Update user profile's school name if empty
+    profile = db.query(models.Profile).filter(models.Profile.user_id == current_user.id).first()
+    if profile and (not profile.school or profile.school.strip() == ''):
+        if inv.school:
+            profile.school = inv.school.name
+
+    db.commit()
+    db.refresh(member)
+
+    # Notify school admins
+    school_name = inv.school.name if inv.school else 'the school'
+    _notify_school_admins(
+        db, inv.school_id, 'school_invite_accepted',
+        'Invitation accepted',
+        f"{current_user.username} accepted the invitation to join {school_name}.",
+        '/app/school'
+    )
+
+    return member
+
+
+@router.post("/invitations/{invite_id}/decline")
+def decline_school_invitation(
+    invite_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Decline a school invitation."""
+    inv = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.id == invite_id,
+        models.SchoolInvitation.user_id == current_user.id
+    ).first()
+    if not inv or inv.status != 'pending':
+        raise HTTPException(status_code=404, detail="Invitation not found or already processed")
+
+    inv.status = 'declined'
+    db.commit()
+    return {"message": "Invitation declined"}
+
+
+@router.post("/{school_id}/invitations", response_model=schemas.SchoolInvitationOut)
+def send_school_invitation(
+    school_id: int,
+    data: schemas.SchoolInvitationCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """School admin or ambassador invites a student/user to join the school."""
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
+    ).first()
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins/ambassadors can invite members")
+
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    query_target = data.username_or_email.strip().lower()
+    target_user = db.query(models.User).filter(
+        (models.User.username == query_target) | (models.User.email == query_target)
+    ).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail=f"No user found with username or email '{data.username_or_email}'")
+
+    # Check if already a member
+    if db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == target_user.id
+    ).first():
+        raise HTTPException(status_code=400, detail=f"{target_user.username} is already a member of this school")
+
+    # Check if invitation is already pending
+    existing_inv = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.school_id == school_id,
+        models.SchoolInvitation.user_id == target_user.id,
+        models.SchoolInvitation.status == 'pending'
+    ).first()
+    if existing_inv:
+        raise HTTPException(status_code=400, detail=f"An invitation is already pending for {target_user.username}")
+
+    role_name = (data.role or 'student').strip()
+
+    inv = models.SchoolInvitation(
+        school_id=school_id,
+        user_id=target_user.id,
+        invited_by_id=current_user.id,
+        role=role_name,
+        status='pending'
+    )
+    db.add(inv)
+    db.commit()
+    db.refresh(inv)
+
+    # Send in-app notification
+    mail.notify(
+        db, target_user, 'school_invitation',
+        f"Invitation to join {school.name}",
+        f"The administrator of {school.name} has invited you to join their official School Hub as a {role_name}.",
+        '/app/school'
+    )
+
+    return inv
+
+
+@router.get("/{school_id}/invitations", response_model=List[schemas.SchoolInvitationOut])
+def get_school_invitations(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """List pending invitations sent by this school (School admin only)."""
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
+    ).first()
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    invitations = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.school_id == school_id,
+    ).order_by(models.SchoolInvitation.created_at.desc()).all()
+    now = datetime.now(timezone.utc)
+    for inv in invitations:
+        if inv.status == 'pending' and inv.created_at and (now - inv.created_at).days >= 7:
+            inv.status = 'expired'
+    db.commit()
+    return invitations
+
+
+@router.delete("/{school_id}/invitations/{invite_id}")
+def cancel_school_invitation(
+    school_id: int,
+    invite_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Cancel a pending invitation (School admin only)."""
+    admin = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
+    ).first()
+    if not admin and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    inv = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.id == invite_id,
+        models.SchoolInvitation.school_id == school_id
+    ).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+
+    db.delete(inv)
+    db.commit()
+    return {"message": "Invitation cancelled"}
+
+
+@router.get("/{school_id}/join-status")
+def get_join_status(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Return the current user's relationship to a school: membership, pending invitation, or none."""
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id
+    ).first()
+    if member:
+        return {"status": "member", "role": member.role}
+
+    inv = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.school_id == school_id,
+        models.SchoolInvitation.user_id == current_user.id,
+        models.SchoolInvitation.status == 'pending'
+    ).first()
+    if inv:
+        return {"status": "invited", "invitation_id": inv.id, "role": inv.role}
+
+    return {"status": "none"}
+
+
+
+# ---------------------------------------------------------------------------
+# Custom role system: each school can define its own role labels and assign
+# them to members. School admins manage roles entirely from within the app.
+# ---------------------------------------------------------------------------
+
+SYSTEM_ROLES = {'admin', 'ambassador', 'student'}
+MAX_SCHOOL_ADMINS = 3
+
+
+def _school_admin_member(db, school_id, current_user):
+    return db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role == 'admin'
+    ).first()
+
+
+@router.get("/{school_id}/roles", response_model=List[schemas.SchoolRoleOut])
+def list_school_roles(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id
+    ).first()
+    if not member and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not a member of this school")
+
+    existing = db.query(models.SchoolRole).filter(models.SchoolRole.school_id == school_id).all()
+    if not existing:
+        # Seed default system-like roles on first access
+        for name, perms in [
+            ('admin', {"manage_members": True, "manage_content": True, "manage_roles": True}),
+            ('ambassador', {"manage_content": True}),
+            ('student', {}),
+        ]:
+            db.add(models.SchoolRole(
+                school_id=school_id, name=name, is_system=True,
+                description=f"Default {name} role", permissions=perms
+            ))
+        db.commit()
+        existing = db.query(models.SchoolRole).filter(models.SchoolRole.school_id == school_id).all()
+    return existing
+
+
+@router.post("/{school_id}/roles", response_model=schemas.SchoolRoleOut)
+def create_school_role(
+    school_id: int,
+    data: schemas.SchoolRoleCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if not _school_admin_member(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins can create roles")
+
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Role name required")
+    if name.lower() in SYSTEM_ROLES:
+        raise HTTPException(status_code=400, detail="Use a custom role name (not admin/ambassador/student)")
+
+    if db.query(models.SchoolRole).filter(models.SchoolRole.school_id == school_id, models.SchoolRole.name == name).first():
+        raise HTTPException(status_code=400, detail="Role already exists")
+
+    role = models.SchoolRole(
+        school_id=school_id,
+        name=name,
+        description=data.description,
+        color=data.color or '#22e079',
+        # Custom roles can never escalate to school-admin authority.
+        permissions={k: v for k, v in (data.permissions or {}).items() if k not in {'manage_roles', 'manage_members', 'make_admin'}},
+        is_system=False
+    )
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    return role
+
+
+@router.put("/{school_id}/members/{user_id}/role", response_model=schemas.SchoolMemberOut)
+def set_member_role(
+    school_id: int,
+    user_id: int,
+    data: schemas.SchoolMemberRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if not _school_admin_member(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins can change roles")
+
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == user_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if target_user and target_user.role == 'admin' and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Platform Admin accounts are protected and can only be changed by a Platform Admin")
+    if member.role == 'admin' and user_id != current_user.id and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="School admins cannot change another school admin's role")
+
+    # Prevent removing the last admin
+    if member.role == 'admin' and data.role != 'admin':
+        admin_count = db.query(models.SchoolMember).filter(
+            models.SchoolMember.school_id == school_id,
+            models.SchoolMember.role == 'admin'
+        ).count()
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="A school must keep at least one admin")
+
+    # Validate role name (system or custom defined for this school)
+    role_name = data.role.strip()
+    is_valid = role_name in SYSTEM_ROLES or db.query(models.SchoolRole).filter(
+        models.SchoolRole.school_id == school_id, models.SchoolRole.name == role_name
+    ).first() is not None
+    if not is_valid:
+        raise HTTPException(status_code=400, detail="Unknown role for this school")
+
+    if role_name == 'admin' and member.role != 'admin':
+        admin_count = db.query(models.SchoolMember).filter(
+            models.SchoolMember.school_id == school_id,
+            models.SchoolMember.role == 'admin'
+        ).count()
+        if admin_count >= MAX_SCHOOL_ADMINS and current_user.role != 'admin':
+            raise HTTPException(status_code=400, detail="This school already has the maximum of 3 admins. Ask the EduNexus Platform Admin for additional admin access.")
+
+    member.role = role_name
+    db.commit()
+    db.refresh(member)
+    return member
+
+@router.patch("/{school_id}/roles/{role_id}", response_model=schemas.SchoolRoleOut)
+def update_school_role(school_id: int, role_id: int, data: schemas.SchoolRoleCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if not _school_admin_member(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Only school admins can edit roles')
+    role = db.query(models.SchoolRole).filter(models.SchoolRole.id == role_id, models.SchoolRole.school_id == school_id).first()
+    if not role: raise HTTPException(status_code=404, detail='Role not found')
+    if role.name.lower() == 'admin': raise HTTPException(status_code=400, detail='The Platform Admin role cannot be edited')
+    role.name = data.name.strip()
+    role.description = data.description
+    role.permissions = {k: v for k, v in (data.permissions or {}).items() if k not in {'manage_roles', 'manage_members', 'make_admin'}}
+    db.commit(); db.refresh(role)
+    return role
+
+
+@router.delete("/{school_id}/members/{user_id}", response_model=schemas.SchoolMemberOut)
+def remove_member(
+    school_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if not _school_admin_member(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins can remove members")
+
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == user_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if target_user and target_user.role == 'admin' and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Platform Admin accounts are protected and can only be removed by a Platform Admin")
+    if member.role == 'admin' and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="School admins cannot remove another school admin")
+
+    if member.role == 'admin':
+        admin_count = db.query(models.SchoolMember).filter(
+            models.SchoolMember.school_id == school_id,
+            models.SchoolMember.role == 'admin'
+        ).count()
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot remove the last admin")
+
+    db.delete(member)
+    db.commit()
+    return member
+
+
+# ---------------------------------------------------------------------------
+# Shareable school join links
+# A school admin/ambassador generates a token link (e.g. shareable on social
+# media). Only existing Edu Nexus accounts can redeem it (the confirm endpoint
+# requires authentication), so it cannot be used to create anonymous members.
+# ---------------------------------------------------------------------------
+
+def _school_staff(db, school_id, current_user):
+    return db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == current_user.id,
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
+    ).first()
+
+
+def _join_link_url(token: str) -> str:
+    return f"{mail.FRONTEND_BASE}/join/school?token={token}"
+
+
+@router.post("/{school_id}/join-links", response_model=schemas.SchoolJoinLinkOut)
+def create_join_link(
+    school_id: int,
+    data: schemas.SchoolJoinLinkCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Create a shareable join link for the school (admin/ambassador only)."""
+    if not _school_staff(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only school admins/ambassadors can create join links")
+
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    role_name = (data.role or 'student').strip()
+    is_valid = role_name in SYSTEM_ROLES or db.query(models.SchoolRole).filter(
+        models.SchoolRole.school_id == school_id, models.SchoolRole.name == role_name
+    ).first() is not None
+    if not is_valid:
+        raise HTTPException(status_code=400, detail="Unknown role for this school")
+
+    link = models.SchoolJoinLink(
+        school_id=school_id,
+        token=secrets.token_urlsafe(24),
+        role=role_name,
+        created_by_id=current_user.id,
+        expires_at=data.expires_at,
+        max_uses=data.max_uses,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return _join_link_out(link)
+
+
+@router.get("/{school_id}/join-links", response_model=List[schemas.SchoolJoinLinkOut])
+def list_join_links(
+    school_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """List join links created for this school (admin/ambassador only)."""
+    if not _school_staff(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    links = db.query(models.SchoolJoinLink).filter(
+        models.SchoolJoinLink.school_id == school_id
+    ).order_by(models.SchoolJoinLink.created_at.desc()).all()
+    return [_join_link_out(l) for l in links]
+
+
+@router.delete("/{school_id}/join-links/{link_id}")
+def disable_join_link(
+    school_id: int,
+    link_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Disable (revoke) a join link (admin/ambassador only)."""
+    if not _school_staff(db, school_id, current_user) and current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    link = db.query(models.SchoolJoinLink).filter(
+        models.SchoolJoinLink.id == link_id,
+        models.SchoolJoinLink.school_id == school_id
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Join link not found")
+    link.active = False
+    db.commit()
+    return {"message": "Join link disabled"}
+
+
+def _join_link_out(link: models.SchoolJoinLink) -> schemas.SchoolJoinLinkOut:
+    return schemas.SchoolJoinLinkOut(
+        id=link.id,
+        school_id=link.school_id,
+        token=link.token,
+        link=_join_link_url(link.token),
+        role=link.role,
+        expires_at=link.expires_at,
+        max_uses=link.max_uses,
+        used_count=link.used_count,
+        active=link.active,
+        created_at=link.created_at,
+    )
+
+
+@router.get("/join/{token}", response_model=schemas.SchoolJoinPreview)
+def preview_join_link(
+    token: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_current_user_optional)
+):
+    """Public preview of a join link. Tells the client which school/role, and
+    whether the (optional) current user is already a member. Redeeming still
+    requires being logged in."""
+    link = db.query(models.SchoolJoinLink).filter(models.SchoolJoinLink.token == token).first()
+    if not link or not link.active:
+        return schemas.SchoolJoinPreview(
+            school_id=0, school_name="", role="", valid=False,
+            message="This join link is invalid or has been disabled."
+        )
+    if link.expires_at and link.expires_at < datetime.now(timezone.utc):
+        return schemas.SchoolJoinPreview(
+            school_id=link.school_id, school_name=link.school.name, role=link.role,
+            valid=False, message="This join link has expired."
+        )
+    if link.max_uses is not None and link.used_count >= link.max_uses:
+        return schemas.SchoolJoinPreview(
+            school_id=link.school_id, school_name=link.school.name, role=link.role,
+            valid=False, message="This join link has reached its usage limit."
+        )
+
+    already_member = False
+    if current_user:
+        existing = db.query(models.SchoolMember).filter(
+            models.SchoolMember.school_id == link.school_id,
+            models.SchoolMember.user_id == current_user.id
+        ).first()
+        already_member = existing is not None
+
+    return schemas.SchoolJoinPreview(
+        school_id=link.school_id,
+        school_name=link.school.name,
+        role=link.role,
+        requires_login=current_user is None,
+        already_member=already_member,
+        valid=True,
+    )
+
+
+@router.post("/join/{token}/confirm", response_model=schemas.SchoolMemberOut)
+def confirm_join_link(
+    token: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Redeem a join link. Requirement: the user must already have an Edu Nexus
+    account (enforced by the auth dependency)."""
+    link = db.query(models.SchoolJoinLink).filter(models.SchoolJoinLink.token == token).first()
+    if not link or not link.active:
+        raise HTTPException(status_code=404, detail="Invalid or disabled join link")
+    if link.expires_at and link.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="This join link has expired")
+    if link.max_uses is not None and link.used_count >= link.max_uses:
+        raise HTTPException(status_code=410, detail="This join link has reached its usage limit")
+
+    existing = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == link.school_id,
+        models.SchoolMember.user_id == current_user.id
+    ).first()
+    if existing:
+        existing.role = link.role
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    member = models.SchoolMember(
+        school_id=link.school_id,
+        user_id=current_user.id,
+        role=link.role,
+    )
+    db.add(member)
+    link.used_count += 1
+    db.commit()
+    db.refresh(member)
+
+    school = link.school
+    _notify_school_admins(
+        db, link.school_id, 'school_join_link',
+        'New member via join link',
+        f"{current_user.username} joined {school.name} using a shareable link.",
+        '/app/school'
+    )
+    return member

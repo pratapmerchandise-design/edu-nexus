@@ -70,3 +70,18 @@ def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
+
+def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ")[1]
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_str: str = payload.get("sub")
+        if user_id_str is None:
+            return None
+        user_id = int(user_id_str)
+        return db.query(User).filter(User.id == user_id).first()
+    except Exception:
+        return None

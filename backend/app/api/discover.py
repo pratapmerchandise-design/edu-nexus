@@ -26,7 +26,11 @@ def discover_students(
         users_query = users_query.filter(
             (User.username.like(q_clean)) |
             (Profile.full_name.like(q_clean)) |
-            (Profile.bio.like(q_clean))
+            (Profile.bio.like(q_clean)) |
+            (Profile.school.like(q_clean)) |
+            (Profile.city.like(q_clean)) |
+            (User.skills.any(Skill.name.ilike(q_clean))) |
+            (User.interests.any(Interest.name.ilike(q_clean)))
         )
 
     if location:
@@ -44,7 +48,7 @@ def discover_students(
         interest_clean = interest.strip().lower()
         users_query = users_query.filter(User.interests.any(Interest.name.ilike(interest_clean)))
 
-    matched_users = users_query.order_by(User.created_at.desc()).limit(50).all()
+    matched_users = users_query.order_by(User.username.asc()).limit(50).all()
     return [format_user_out(u, current_user.id, db) for u in matched_users]
 
 @router.get("/posts")

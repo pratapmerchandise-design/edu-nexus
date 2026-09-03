@@ -1,12 +1,37 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
-from backend.app.models import User, Profile, Interest, Skill
-from backend.app.schemas import UserRegister, UserLogin, Token
+from backend.app.models import User, Profile, Interest, Skill, OTPVerification, School, SchoolJoinRequest, SchoolInvitation
+from backend.app.schemas import UserRegister, UserLogin, Token, CheckAvailabilityRequest
 from backend.app.auth.security import get_password_hash, verify_password, create_access_token, get_current_user
 from backend.app.utils import format_user_out
+from backend.app import email as mail
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+@router.post("/check-availability")
+def check_availability(data: CheckAvailabilityRequest, db: Session = Depends(get_db)):
+    """Pre-validate if email or username are already registered before completing signup steps."""
+    email = (data.email or "").strip().lower()
+    username = (data.username or "").strip().lower()
+
+    errors = {}
+    if email:
+        existing_email = db.query(User).filter(User.email.ilike(email)).first()
+        if existing_email:
+            errors["email"] = "Email is already registered. Please sign in or use another email."
+
+    if username:
+        existing_user = db.query(User).filter(User.username == username).first()
+        if existing_user:
+            errors["username"] = "Username is already taken. Please choose a different username."
+
+    return {
+        "available": len(errors) == 0,
+        "email_available": "email" not in errors,
+        "username_available": "username" not in errors,
+        "errors": errors,
+    }
 
 @router.post("/register")
 def register_user(data: UserRegister, db: Session = Depends(get_db)):
@@ -16,12 +41,21 @@ def register_user(data: UserRegister, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == data.username.lower()).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username is already taken.")
 
+    # Resolve selected school name (school-only app: school is chosen from the directory)
+    selected_school_name = data.school
+    if data.school_id:
+        school = db.query(School).filter(School.id == data.school_id).first()
+        if school:
+            selected_school_name = school.name
+
     # Create User
     new_user = User(
         username=data.username.lower(),
         email=data.email.lower(),
         hashed_password=get_password_hash(data.password),
-        role="student"
+        phone=data.phone,
+        role="student",
+        is_email_verified=False,
     )
     db.add(new_user)
     db.flush()
@@ -34,7 +68,7 @@ def register_user(data: UserRegister, db: Session = Depends(get_db)):
         avatar_url=avatar_url,
         country=data.country,
         city=data.city,
-        school=data.school,
+        school=selected_school_name,
         grade=data.grade,
         dob=data.dob
     )
@@ -66,12 +100,32 @@ def register_user(data: UserRegister, db: Session = Depends(get_db)):
 
     db.commit()
 
-    # Create token
+    # Send email verification code (email must be verified before using the app)
+    try:
+        otp = generate_otp()
+        db.query(OTPVerification).filter(
+            OTPVerification.user_id == new_user.id,
+            OTPVerification.contact == new_user.email
+        ).delete()
+        verification = OTPVerification(
+            user_id=new_user.id,
+            contact=new_user.email,
+            otp_code=otp,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+        )
+        db.add(verification)
+        db.commit()
+        mail.send_verification_email(new_user.email, otp)
+    except Exception as e:
+        print(f"[Auth] Failed to send verification email: {e}")
+
+    # Create token (user is gated by email verification on the client)
     access_token = create_access_token(data={"sub": str(new_user.id)})
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": format_user_out(new_user, new_user.id, db)
+        "user": format_user_out(new_user, new_user.id, db),
+        "requires_verification": True,
     }
 
 @router.post("/login")
@@ -134,8 +188,8 @@ def request_email_otp(current_user: User = Depends(get_current_user), db: Sessio
     db.add(verification)
     db.commit()
     
-    send_mock_otp(current_user.email, otp)
-    return {"message": "OTP sent to email"}
+    mail.send_verification_email(current_user.email, otp)
+    return {"message": "Verification code sent to email"}
 
 @router.post("/verify-email-otp")
 def verify_email_otp(data: OTPVerify, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -222,7 +276,7 @@ def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
     user.reset_password_expires = datetime.now(timezone.utc) + timedelta(hours=1)
     db.commit()
     
-    send_mock_otp(user.email, token, is_reset=True)
+    mail.send_password_reset_email(user.email, token)
     return {"message": "If an account exists, a reset link has been sent"}
 
 @router.post("/reset-password")
@@ -237,6 +291,9 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
     user.hashed_password = get_password_hash(data.new_password)
     user.reset_password_token = None
     user.reset_password_expires = None
+    invitations = db.query(SchoolInvitation).filter(SchoolInvitation.user_id == user.id, SchoolInvitation.role == 'admin', SchoolInvitation.status == 'pending').all()
+    for invitation in invitations:
+        invitation.status = 'accepted'
     db.commit()
     
     return {"message": "Password reset successfully"}

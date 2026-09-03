@@ -3,7 +3,9 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import type { NotificationItem, Conversation } from '../types';
-import { Home, Compass, MessageSquare, Award, Bell, User as UserIcon, Shield, LogOut, Search, Sun, Moon } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
+import { MembershipBadge } from './MembershipBadge';
+import { Home, Compass, MessagesSquare, MessageSquare, Award, Bell, User as UserIcon, Shield, LogOut, Search, Sun, Moon, Crown } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
 export const AppNavbar: React.FC = () => {
@@ -46,7 +48,7 @@ export const AppNavbar: React.FC = () => {
   const navItems = [
     { label: 'Home', path: '/app/feed', icon: Home },
     { label: 'Discover', path: '/app/discover', icon: Compass },
-    { label: 'Forums', path: '/app/forums', icon: MessageSquare },
+    { label: 'Forums', path: '/app/forums', icon: MessagesSquare },
     { label: 'Opportunities', path: '/app/opportunities', icon: Award },
     { label: 'Profile', path: `/app/profile/${user?.username || ''}`, icon: UserIcon },
   ];
@@ -57,7 +59,8 @@ export const AppNavbar: React.FC = () => {
       <header className="sticky top-0 z-40 bg-background/90 backdrop-blur-md border-b border-border px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <Link to="/app/feed" className="flex items-center gap-3">
-            <img src="/edu-nexus-logo.png" alt="Edu Nexus" className="h-8 object-contain" />
+            <img src="/edu-nexus-logo-light.png" alt="Edu Nexus" className="h-8 object-contain logo-for-light" />
+            <img src="/edu-nexus-logo.png" alt="Edu Nexus" className="h-8 object-contain logo-for-dark" />
           </Link>
 
           {/* Search bar */}
@@ -109,6 +112,16 @@ export const AppNavbar: React.FC = () => {
               )}
             </Link>
 
+            {/* Early Bird Membership Callout */}
+            <Link
+              to="/app/membership"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500/15 via-primary/15 to-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-extrabold text-xs hover:border-emerald-400/60 transition-all shadow-xs"
+              title="Claim 1 Month Free Early Bird Pass"
+            >
+              <Crown className="w-3.5 h-3.5 text-primary" />
+              <span>1 Mo Free</span>
+            </Link>
+
             {user?.role === 'admin' && (
               <Link
                 to="/app/admin"
@@ -123,19 +136,24 @@ export const AppNavbar: React.FC = () => {
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="flex items-center gap-2 p-1 rounded-full hover:ring-2 hover:ring-primary/50 transition-all"
+                className="flex items-center gap-2 p-0.5 rounded-full transition-transform hover:scale-105"
+                title="Account Menu"
               >
-                <img
-                  src={user?.profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username}`}
-                  alt={user?.username}
-                  className="w-8 h-8 rounded-full border border-border object-cover"
+                <UserAvatar
+                  src={user?.profile?.avatar_url}
+                  username={user?.username}
+                  membership={user?.membership}
+                  size={36}
                 />
               </button>
 
               {userMenuOpen && (
                 <div className="absolute right-0 mt-2 w-48 bg-card border border-border rounded-xl shadow-2xl py-2 z-50 animate-in">
                   <div className="px-4 py-2 border-b border-border">
-                    <p className="text-xs font-bold text-card-foreground truncate">{user?.profile?.full_name || user?.username}</p>
+                    <p className="text-xs font-bold text-card-foreground truncate flex items-center gap-1.5">
+                      {user?.profile?.full_name || user?.username}
+                      <MembershipBadge membership={user?.membership} size={13} />
+                    </p>
                     <p className="text-[10px] text-muted-foreground truncate">@{user?.username}</p>
                   </div>
                   <Link
@@ -144,6 +162,18 @@ export const AppNavbar: React.FC = () => {
                     className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-primary transition-colors"
                   >
                     <UserIcon className="w-3.5 h-3.5" /> My Profile
+                  </Link>
+                  <Link
+                    to="/app/membership"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-primary transition-colors"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Crown className="w-3.5 h-3.5 text-primary" /> Membership
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-400">
+                      FREE
+                    </span>
                   </Link>
                   {user?.role === 'admin' && (
                     <Link

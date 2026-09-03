@@ -5,6 +5,7 @@ from backend.app.database import get_db
 from backend.app.models import ForumCategory, ForumThread, ForumReply, ForumUpvote, ForumDownvote, User, Notification
 from backend.app.schemas import ForumCategoryOut, ForumThreadCreate, ForumThreadOut, ForumReplyCreate, ForumReplyOut
 from backend.app.auth.security import get_current_user
+from backend.app.utils import _membership_info
 
 router = APIRouter(prefix="/forums", tags=["Forums"])
 
@@ -60,6 +61,7 @@ def format_thread_out(t: ForumThread, current_user_id: int, db: Session) -> dict
         "replies_count": replies_cnt,
         "user_upvoted": user_upvoted,
         "user_downvoted": user_downvoted,
+        "author_membership": _membership_info(author, db) if not t.is_anonymous else None,
         "created_at": t.created_at
     }
 

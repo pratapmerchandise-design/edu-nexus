@@ -3,6 +3,7 @@ import { AppLayout } from '../../components/AppLayout';
 import { api } from '../../services/api';
 import type { ForumCategory, ForumThread, ForumReply } from '../../types';
 import { MessageSquare, ThumbsUp, ThumbsDown, Plus, UserX } from 'lucide-react';
+import { MembershipBadge } from '../../components/MembershipBadge';
 
 export const ForumsPage: React.FC = () => {
   const [categories, setCategories] = useState<ForumCategory[]>([]);
@@ -201,8 +202,9 @@ export const ForumsPage: React.FC = () => {
                         <UserX className="w-3 h-3 text-primary" /> Anonymous Student
                       </span>
                     ) : (
-                      <span className="text-[10px] font-semibold text-foreground/90">
+                      <span className="text-[10px] font-semibold text-foreground/90 flex items-center gap-1">
                         @{t.author_username}
+                        <MembershipBadge membership={t.author_membership} size={12} />
                       </span>
                     )}
                   </div>

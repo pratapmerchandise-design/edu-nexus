@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AppLayout } from '../../components/AppLayout';
 import { api } from '../../services/api';
+import { SpotlightCard } from '../../components/reactbits/SpotlightCard';
+import { ShinyText } from '../../components/reactbits/ShinyText';
+import { AuroraGlow } from '../../components/reactbits/AuroraGlow';
 import type { Opportunity } from '../../types';
 import { Bookmark, ExternalLink, Calendar, Search } from 'lucide-react';
 
@@ -13,6 +16,12 @@ export const OpportunitiesPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'saved'>('all');
   const [activeOppModal, setActiveOppModal] = useState<Opportunity | null>(null);
+
+  // New LinkedIn-style filters
+  const [locationFilter, setLocationFilter] = useState<'All' | 'Remote' | 'On-site'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Open' | 'Closing Soon' | 'Closed'>('All');
+  const [dateFilter, setDateFilter] = useState<'Any' | 'Past24' | 'PastWeek' | 'PastMonth'>('Any');
+  const [experienceFilter, setExperienceFilter] = useState<'Any' | 'High School' | 'Undergraduate' | 'Graduate'>('Any');
 
   const fetchOpportunities = async () => {
     setLoading(true);
@@ -42,38 +51,69 @@ export const OpportunitiesPage: React.FC = () => {
     }
   };
 
-  const types = ['All', 'Hackathon', 'Scholarships', 'Research', 'Competitions', 'Internships'];
+  const types = ['All', 'Hackathon', 'Scholarships', 'Research', 'Competitions', 'Internships', 'Jobs'];
 
   const filtered = opportunities.filter((o) => {
     const matchesSearch = !search || o.title.toLowerCase().includes(search.toLowerCase()) || o.description.toLowerCase().includes(search.toLowerCase()) || o.organization.toLowerCase().includes(search.toLowerCase());
     const matchesType = selectedType === 'All' || o.type.toLowerCase().includes(selectedType.toLowerCase());
-    return matchesSearch && matchesType;
+    
+    let matchesLocation = true;
+    if (locationFilter === 'Remote') matchesLocation = o.is_online === true;
+    if (locationFilter === 'On-site') matchesLocation = o.is_online === false;
+
+    let matchesStatus = true;
+    if (statusFilter !== 'All') matchesStatus = o.status === statusFilter;
+
+    let matchesDate = true;
+    if (dateFilter !== 'Any' && o.created_at) {
+      const createdDate = new Date(o.created_at);
+      const now = new Date();
+      const diffTime = Math.abs(now.getTime() - createdDate.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      if (dateFilter === 'Past24') matchesDate = diffDays <= 1;
+      if (dateFilter === 'PastWeek') matchesDate = diffDays <= 7;
+      if (dateFilter === 'PastMonth') matchesDate = diffDays <= 30;
+    }
+
+    let matchesExperience = true;
+    if (experienceFilter !== 'Any') {
+      const eligibility = o.eligibility?.toLowerCase() || '';
+      const grade = o.grade_requirements?.toLowerCase() || '';
+      const exp = experienceFilter.toLowerCase();
+      matchesExperience = eligibility.includes(exp) || grade.includes(exp);
+    }
+
+    return matchesSearch && matchesType && matchesLocation && matchesStatus && matchesDate && matchesExperience;
   });
 
   return (
     <AppLayout>
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="bg-card border border-border rounded-2xl p-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+        {/* Header with Aurora Glow */}
+        <div className="bg-card border border-border rounded-3xl p-6 shadow-md relative overflow-hidden">
+          <AuroraGlow size="md" opacity={0.4} />
+          <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
             <div>
-              <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground mb-1">Student Opportunities</h2>
-              <p className="text-xs text-muted-foreground">Discover and bookmark hackathons, scholarships, and research grants.</p>
+              <h2 className="text-2xl font-extrabold uppercase tracking-tight text-foreground mb-1 flex items-center gap-2">
+                <span>Student</span>
+                <ShinyText color="var(--primary)">Opportunities</ShinyText>
+              </h2>
+              <p className="text-xs text-muted-foreground">Discover and bookmark jobs, hackathons, and research grants.</p>
             </div>
 
             <div className="flex gap-2">
               <button
                 onClick={() => setActiveTab('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'all' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'all' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'bg-secondary text-muted-foreground hover:text-foreground'
                 }`}
               >
                 All Opportunities
               </button>
               <button
                 onClick={() => setActiveTab('saved')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'saved' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'saved' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'bg-secondary text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Saved ({opportunities.filter((o) => o.user_bookmarked).length})
@@ -81,33 +121,82 @@ export const OpportunitiesPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Search & Types */}
-          <div className="space-y-3">
+          {/* Filters Section */}
+          <div className="space-y-4">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search by title, organization, keyword..."
+                placeholder="Search by title, organization, or keyword..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-secondary border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                className="w-full bg-background border border-border rounded-xl pl-11 pr-4 py-3 text-xs font-medium text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary shadow-sm transition-all"
               />
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {types.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setSelectedType(t)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                    selectedType === t
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-secondary text-muted-foreground border border-border hover:text-foreground'
-                  }`}
+            <div className="flex flex-col gap-4">
+              <div className="flex overflow-x-auto pb-1 -mb-1 hide-scrollbar">
+                <div className="flex gap-2 min-w-max">
+                  {types.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setSelectedType(t)}
+                      className={`px-4 py-2 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+                        selectedType === t
+                          ? 'bg-foreground text-background shadow-md'
+                          : 'bg-secondary text-muted-foreground border border-border hover:border-foreground/30 hover:text-foreground'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <select 
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value as any)}
+                  className="pill-select"
                 >
-                  {t}
-                </button>
-              ))}
+                  <option value="Any">Date Posted</option>
+                  <option value="Past24">Past 24 hours</option>
+                  <option value="PastWeek">Past Week</option>
+                  <option value="PastMonth">Past Month</option>
+                </select>
+
+                <select 
+                  value={experienceFilter}
+                  onChange={(e) => setExperienceFilter(e.target.value as any)}
+                  className="pill-select"
+                >
+                  <option value="Any">Experience Level</option>
+                  <option value="High School">High School</option>
+                  <option value="Undergraduate">Undergraduate</option>
+                  <option value="Graduate">Graduate</option>
+                </select>
+
+                <select 
+                  value={locationFilter}
+                  onChange={(e) => setLocationFilter(e.target.value as any)}
+                  className="pill-select"
+                >
+                  <option value="All">Location</option>
+                  <option value="Remote">Remote</option>
+                  <option value="On-site">On-site</option>
+                </select>
+
+                <select 
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as any)}
+                  className="pill-select"
+                >
+                  <option value="All">Status</option>
+                  <option value="Open">Open</option>
+                  <option value="Closing Soon">Closing Soon</option>
+                  <option value="Closed">Closed</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -125,7 +214,7 @@ export const OpportunitiesPage: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {filtered.map((opp) => (
-              <div key={opp.id} className="ui-card p-5 space-y-3 flex flex-col justify-between">
+              <SpotlightCard key={opp.id} className="p-5 space-y-3 flex flex-col justify-between glow-on-hover shadow-sm">
                 <div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold uppercase">
@@ -164,7 +253,7 @@ export const OpportunitiesPage: React.FC = () => {
                     View Details →
                   </button>
                 </div>
-              </div>
+              </SpotlightCard>
             ))}
           </div>
         )}
@@ -172,7 +261,7 @@ export const OpportunitiesPage: React.FC = () => {
         {/* Opportunity Detail Modal */}
         {activeOppModal && (
           <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
+            <div className="bg-card border border-border rounded-3xl w-full max-w-lg p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-thin">
               <div className="flex items-center justify-between border-b border-border pb-3">
                 <span className="px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold uppercase">
                   {activeOppModal.type}

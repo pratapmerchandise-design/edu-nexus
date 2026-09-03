@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { AppLayout } from '../../components/AppLayout';
-import { api } from '../../services/api';
-import { renderContentWithHighlights, timeAgo } from '../../utils/textUtils';
+import { api, uploadFile } from '../../services/api';
+import { MembershipBadge } from '../../components/MembershipBadge';
+import { UserAvatar } from '../../components/UserAvatar';
+import { AuroraGlow } from '../../components/reactbits/AuroraGlow';
+import { ShinyText } from '../../components/reactbits/ShinyText';
+import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/textUtils';
 import type { User, Post } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Edit3 } from 'lucide-react';
+import { Edit3, Share2 } from 'lucide-react';
 
 export const ProfilePage: React.FC = () => {
   const { username } = useParams<{ username: string }>();
@@ -17,6 +21,11 @@ export const ProfilePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'posts' | 'saved'>('posts');
   const [uploading, setUploading] = useState(false);
+  const [showShareProfile, setShowShareProfile] = useState(false);
+  const [profileChats, setProfileChats] = useState<any[]>([]);
+  const [profileShareError, setProfileShareError] = useState('');
+  const [selectedProfileChats, setSelectedProfileChats] = useState<any[]>([]);
+  const [sendingProfile, setSendingProfile] = useState(false);
 
   // Edit Profile Modal State
   const [showEditModal, setShowEditModal] = useState(false);
@@ -56,6 +65,11 @@ export const ProfilePage: React.FC = () => {
   }, [username]);
 
   const isOwnProfile = currentUser && profileUser && currentUser.id === profileUser.id;
+  const profileShareUrl = `${window.location.origin}/u/${profileUser?.username || username}`;
+  const openProfileShare = async () => { setProfileShareError(''); setShowShareProfile(true); try { setProfileChats(await api.get<any[]>('/conversations')); } catch (e: any) { setProfileChats([]); setProfileShareError(e.message || 'Could not load chats.'); } };
+  const shareProfileOutside = async () => { try { if (navigator.share) await navigator.share({ title: `${profileUser?.profile?.full_name || profileUser?.username} on EduNexus`, url: profileShareUrl }); else { await navigator.clipboard.writeText(profileShareUrl); alert('Profile link copied!'); } } catch (e: any) { if (e?.name !== 'AbortError') setProfileShareError(e.message || 'Could not share profile.'); } };
+  const toggleProfileChat = (chat: any) => setSelectedProfileChats((prev) => prev.some((c) => c.id === chat.id) ? prev.filter((c) => c.id !== chat.id) : [...prev, chat]);
+  const confirmProfileChat = async () => { if (!selectedProfileChats.length) return; setSendingProfile(true); try { await Promise.all(selectedProfileChats.map((chat) => api.post(`/conversations/${chat.id}/messages`, { content: `Check out this EduNexus profile: ${profileShareUrl}` }))); setShowShareProfile(false); setSelectedProfileChats([]); alert('Profile shared in chat.'); } catch (e: any) { setProfileShareError(e.message || 'Could not share in chat.'); } finally { setSendingProfile(false); } };
 
   const handleFollowToggle = async () => {
     if (!profileUser) return;
@@ -77,7 +91,12 @@ export const ProfilePage: React.FC = () => {
       const conv = await api.post<any>(`/conversations?target_username=${profileUser.username}`);
       navigate(`/app/messages?conv=${conv.id}`);
     } catch (err: any) {
-      alert(err.message || 'Failed to start conversation');
+      const msg = err.message || 'Failed to start conversation';
+      if (/limit/i.test(msg)) {
+        if (confirm(`${msg}\n\nGo to Membership to upgrade?`)) navigate('/app/membership');
+      } else {
+        alert(msg);
+      }
     }
   };
 
@@ -129,33 +148,16 @@ export const ProfilePage: React.FC = () => {
     if (!file) return;
 
     setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('http://localhost:8000/api/upload', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setEditForm({ ...editForm, avatar_url: data.url });
-      } else {
-        alert(data.detail || 'Upload failed');
-      }
-    } catch (error) {
+      const data = await uploadFile(file);
+      setEditForm({ ...editForm, avatar_url: data.url });
+    } catch (error: any) {
       console.error(error);
-      alert('Error uploading file');
+      alert(error.message || 'Error uploading file');
     } finally {
       setUploading(false);
     }
   };
-
-  const DICEBEAR_STYLES = ['adventurer', 'bottts', 'fun-emoji', 'icons', 'micah', 'notionists', 'avataaars', 'shapes', 'thumbs'];
 
   if (loading) {
     return (
@@ -178,10 +180,15 @@ export const ProfilePage: React.FC = () => {
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Profile Card Header */}
         <div className="bg-card border border-border rounded-3xl overflow-hidden shadow-2xl">
-          {/* Cover Banner */}
-          <div className="h-36 bg-gradient-to-r from-[#082515] to-[#103f26] relative p-4 flex justify-between items-start">
-            <span className="px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[9px] font-extrabold uppercase tracking-widest">
-              {profileUser.profile?.open_to_collab ? 'OPEN TO COLLABORATE' : 'STUDENT'}
+          {/* Cover Banner with Aurora Glow */}
+          <div className="h-40 bg-gradient-to-r from-[#082515] to-[#103f26] relative p-5 flex justify-between items-start overflow-hidden">
+            <AuroraGlow size="full" opacity={0.7} />
+            <span className="relative z-10 px-3.5 py-1 rounded-full bg-primary/20 backdrop-blur-md border border-primary/30 text-primary text-[9px] font-extrabold uppercase tracking-widest shadow-sm">
+              {profileUser.profile?.open_to_collab ? (
+                <ShinyText color="var(--primary)">OPEN TO COLLABORATE</ShinyText>
+              ) : (
+                'STUDENT'
+              )}
             </span>
 
             {isOwnProfile ? (
@@ -215,11 +222,14 @@ export const ProfilePage: React.FC = () => {
 
           {/* Profile Info */}
           <div className="px-6 pb-6 pt-0 relative">
+            <button onClick={openProfileShare} className="absolute right-5 top-4 px-4 py-2 rounded-xl bg-secondary border border-border text-xs font-bold text-foreground hover:border-primary flex items-center gap-1.5"><Share2 className="w-3.5 h-3.5 text-primary" /> Share Profile</button>
             <div className="flex items-end justify-between -mt-12 mb-4">
-              <img
-                src={profileUser.profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${profileUser.username}`}
-                alt={profileUser.username}
-                className="w-24 h-24 rounded-full border-4 border-border bg-secondary object-cover"
+              <UserAvatar
+                src={profileUser.profile?.avatar_url}
+                username={profileUser.username}
+                membership={profileUser.membership}
+                size={96}
+                className="border-4 border-card bg-secondary shadow-xl z-20"
               />
               <div className="flex gap-6 text-center text-xs">
                 <div>
@@ -230,7 +240,13 @@ export const ProfilePage: React.FC = () => {
                   <strong className="block text-base text-foreground">{profileUser.following_count}</strong>
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Following</span>
                 </div>
-                <div>
+                <div 
+                  onClick={() => {
+                    setActiveTab('posts');
+                    document.getElementById('profile-content-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                  className="cursor-pointer hover:text-primary transition-colors"
+                >
                   <strong className="block text-base text-foreground">{userPosts.length}</strong>
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Posts</span>
                 </div>
@@ -238,7 +254,10 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             <div>
-              <h2 className="text-2xl font-bold text-foreground uppercase">{profileUser.profile?.full_name || profileUser.username}</h2>
+              <h2 className="text-2xl font-bold text-foreground uppercase flex items-center gap-2">
+                {profileUser.profile?.full_name || profileUser.username}
+                <MembershipBadge membership={profileUser.membership} size={20} />
+              </h2>
               <p className="text-xs text-primary font-medium">@{profileUser.username}</p>
 
               <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mt-2">
@@ -293,7 +312,7 @@ export const ProfilePage: React.FC = () => {
         </div>
 
         {/* User Activity & Posts */}
-        <div className="space-y-4">
+        <div id="profile-content-tabs" className="space-y-4 pt-4">
           <div className="border-b border-border pb-2 flex gap-4">
             <button
               onClick={() => setActiveTab('posts')}
@@ -316,15 +335,35 @@ export const ProfilePage: React.FC = () => {
                 <div key={post.id} className="ui-card p-5 space-y-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-bold text-foreground">@{post.author_username}</span>
-                    <span className="text-[10px] text-muted-foreground">{new Date(post.created_at).toLocaleDateString()} • {timeAgo(post.created_at)}</span>
+                    <span className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                      {post.audience && post.audience !== 'public' && (
+                        <span className="px-2 py-0.5 rounded-full border border-dashed border-muted-foreground/40">
+                          {post.audience === 'followers' ? 'Followers only' : 'Community'}
+                        </span>
+                      )}
+                      {new Date(post.created_at).toLocaleDateString()} • {timeAgo(post.created_at)}
+                    </span>
                   </div>
                   {post.title && <h4 className="text-sm font-bold text-foreground uppercase">{post.title}</h4>}
                   <p className="text-xs text-foreground/90 whitespace-pre-wrap">{renderContentWithHighlights(post.content)}</p>
+                  {post.images && post.images.length > 0 && (
+                    isVideoUrl(post.images[0]) ? (
+                      <div className="rounded-2xl overflow-hidden border border-border/80 bg-black/60 flex items-center justify-center mt-2">
+                        <video src={post.images[0]} controls playsInline preload="metadata" className="w-full max-h-[500px] object-contain rounded-2xl bg-black" />
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl overflow-hidden border border-border/80 bg-secondary/30 flex items-center justify-center mt-2">
+                        <img src={post.images[0]} alt="Post visual" className="w-full max-h-[500px] object-contain rounded-2xl" loading="lazy" />
+                      </div>
+                    )
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
+
+        {showShareProfile && <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-card border border-border rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl"><div className="flex justify-between"><h3 className="font-bold">Share Profile</h3><button onClick={() => { setShowShareProfile(false); setSelectedProfileChats([]); }}>✕</button></div>{profileShareError && <p className="text-xs text-red-500">{profileShareError}</p>}<button onClick={shareProfileOutside} className="w-full button button-ghost">Share outside EduNexus</button><p className="text-[10px] font-bold uppercase text-muted-foreground">Choose one or more chats</p><div className="max-h-56 overflow-y-auto space-y-2">{profileChats.map((chat) => { const person=chat.other_user; const name=chat.is_group ? (chat.name || `Group (${chat.member_count || 0})`) : (person?.profile?.full_name || person?.username || 'Chat'); const selected=selectedProfileChats.some((c) => c.id === chat.id); return <button key={chat.id} onClick={() => toggleProfileChat(chat)} className={`w-full text-left p-3 rounded-xl bg-secondary border text-sm ${selected ? 'border-primary bg-primary/10' : 'border-border'}`}><span className="mr-2">{selected ? '✓' : '○'}</span>{name}<span className="block ml-5 text-[10px] text-muted-foreground">{chat.is_group ? `${chat.member_count || 0} members` : [person?.profile?.school, person?.username && `@${person.username}`].filter(Boolean).join(' · ')}</span></button>; })}</div>{!profileShareError && profileChats.length === 0 && <p className="text-xs text-muted-foreground">No chats found. Start a conversation first.</p>}{selectedProfileChats.length > 0 && <div className="border-t border-border pt-4"><p className="text-sm mb-3">Send this profile to <b>{selectedProfileChats.length} selected chats</b>?</p><div className="flex gap-2"><button onClick={() => setSelectedProfileChats([])} className="button button-ghost flex-1">Cancel</button><button disabled={sendingProfile} onClick={confirmProfileChat} className="button button-primary flex-1">{sendingProfile ? 'Sending…' : 'Send ➤'}</button></div></div>}</div></div>}
 
         {/* Edit Profile Modal */}
         {showEditModal && (

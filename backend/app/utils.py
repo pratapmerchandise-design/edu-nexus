@@ -1,5 +1,27 @@
 from sqlalchemy.orm import Session
-from backend.app.models import User, Follow, Profile, Interest, Skill
+from backend.app.models import User, Follow, Profile, Interest, Skill, UserMembership
+from backend.app import membership_config as mconfig
+
+
+def _membership_info(user: User, db: Session | None) -> dict | None:
+    if db is None:
+        return None
+    membership = db.query(UserMembership).filter(
+        UserMembership.user_id == user.id,
+        UserMembership.status == 'active'
+    ).order_by(UserMembership.expires_at.desc()).first()
+    if not membership:
+        return {'tier': None, 'active': False, 'name': mconfig.FREE_TIER['name'], 'color': mconfig.FREE_TIER['color'], 'perks': mconfig.FREE_TIER['perks']}
+    cfg = mconfig.get_tier_config(membership.tier)
+    return {
+        'tier': membership.tier,
+        'active': True,
+        'name': cfg['name'],
+        'color': cfg['color'],
+        'perks': cfg['perks'],
+        'expires_at': membership.expires_at,
+    }
+
 
 def format_user_out(user: User, current_user_id: int | None = None, db: Session | None = None) -> dict:
     followers_count = 0
@@ -53,4 +75,5 @@ def format_user_out(user: User, current_user_id: int | None = None, db: Session 
         "followers_count": followers_count,
         "following_count": following_count,
         "is_following": is_following,
+        "membership": _membership_info(user, db),
     }

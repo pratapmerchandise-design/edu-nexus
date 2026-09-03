@@ -13,12 +13,18 @@ class UserRegister(BaseModel):
     city: Optional[str] = None
     school: Optional[str] = None
     grade: Optional[str] = None
+    school_id: Optional[int] = None
+    phone: Optional[str] = None
     interests: Optional[List[str]] = []
     skills: Optional[List[str]] = []
 
 class UserLogin(BaseModel):
     email_or_username: str
     password: str
+
+class CheckAvailabilityRequest(BaseModel):
+    email: Optional[str] = None
+    username: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -60,9 +66,11 @@ class UserOut(BaseModel):
     followers_count: int = 0
     following_count: int = 0
     is_following: Optional[bool] = False
+    membership: Optional[dict] = None
 
     class Config:
         from_attributes = True
+
 
 class OTPRequest(BaseModel):
     contact: str
@@ -254,21 +262,88 @@ class OpportunityOut(BaseModel):
         from_attributes = True
 
 # --- Messaging Schemas ---
+class ConversationMemberOut(BaseModel):
+    id: int
+    user: UserOut
+    role: str
+
+    class Config:
+        from_attributes = True
+
+class GroupRequestOut(BaseModel):
+    id: int
+    conversation_id: int
+    conversation: "ConversationOut"
+    user: UserOut
+    type: str
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class GroupCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_public: bool = False
+    initial_member_usernames: List[str] = []
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_public: Optional[bool] = None
+
 class ConversationOut(BaseModel):
     id: int
-    other_user: UserOut
+    is_group: bool
+    name: Optional[str] = None
+    description: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_public: bool
+    only_admins_can_message: bool
+    only_admins_can_edit_settings: bool
+
+    other_user: Optional[UserOut] = None
     last_message: Optional[str] = None
     last_message_time: Optional[datetime] = None
     unread_count: int = 0
     status: str
     initiator_id: Optional[int] = None
     updated_at: datetime
+    
+    # Only populated for group chats
+    member_count: Optional[int] = None
+    members: Optional[List[ConversationMemberOut]] = None
 
     class Config:
         from_attributes = True
 
 class MessageCreate(BaseModel):
     content: str
+    reply_to_id: Optional[int] = None
+    attachment_url: Optional[str] = None
+    attachment_type: Optional[str] = None
+    is_poll: bool = False
+    poll_multiple_answers: bool = False
+    poll_options: Optional[List[str]] = None
+
+class MessageReplyOut(BaseModel):
+    id: int
+    sender_username: str
+    content: str
+    attachment_type: Optional[str] = None
+    is_poll: bool = False
+
+    class Config:
+        from_attributes = True
+
+class MessagePollOptionOut(BaseModel):
+    id: int
+    option_text: str
+    votes_count: int
+    user_voted: bool
 
 class MessageOut(BaseModel):
     id: int
@@ -279,7 +354,17 @@ class MessageOut(BaseModel):
     content: str
     is_read: bool
     is_delivered: bool
-    created_at: datetime
+    reply_to_id: Optional[int] = None
+    replied_to_message: Optional[MessageReplyOut] = None
+    attachment_url: Optional[str] = None
+    attachment_type: Optional[str] = None
+    is_poll: bool = False
+    poll_multiple_answers: bool = False
+    poll_options: Optional[List[MessagePollOptionOut]] = None
+    is_deleted: bool = False
+    deleted_by_admin: bool = False
+    created_at: Optional[datetime] = None
+    sender_avatar: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -317,3 +402,318 @@ class ReportOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class GroupSettingsUpdate(BaseModel):
+    only_admins_can_message: Optional[bool] = None
+    only_admins_can_edit_settings: Optional[bool] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+# School Layer Schemas
+
+class SchoolBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    logo_url: Optional[str] = None
+
+class SchoolCreate(SchoolBase):
+    pass
+
+class SchoolOut(SchoolBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolMemberBase(BaseModel):
+    role: str
+
+class SchoolMemberCreate(SchoolMemberBase):
+    user_id: int
+
+class SchoolMemberOut(SchoolMemberBase):
+    id: int
+    school_id: int
+    user: UserOut
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolClubBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class SchoolClubCreate(SchoolClubBase):
+    pass
+
+class SchoolClubOut(SchoolClubBase):
+    id: int
+    school_id: int
+    ambassador: Optional[UserOut] = None
+    created_at: datetime
+    members_count: Optional[int] = 0
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolEventBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    event_type: str = 'activity'
+    event_date: Optional[datetime] = None
+
+class SchoolEventCreate(SchoolEventBase):
+    pass
+
+class SchoolEventOut(SchoolEventBase):
+    id: int
+    school_id: int
+    created_by: Optional[UserOut] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolAnnouncementBase(BaseModel):
+    title: str
+    content: str
+
+class SchoolAnnouncementCreate(SchoolAnnouncementBase):
+    pass
+
+class SchoolAnnouncementOut(SchoolAnnouncementBase):
+    id: int
+    school_id: int
+    author: Optional[UserOut] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+class SchoolJoinRequestBase(BaseModel):
+    school_id: int
+
+class SchoolJoinRequestCreate(SchoolJoinRequestBase):
+    pass
+
+class SchoolJoinRequestOut(SchoolJoinRequestBase):
+    id: int
+    user_id: int
+    user: Optional[UserOut] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolSuggestionBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    contact_email: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+
+class SchoolSuggestionCreate(SchoolSuggestionBase):
+    pass
+
+class SchoolSuggestionOut(SchoolSuggestionBase):
+    id: int
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolAdminCreate(BaseModel):
+    school_id: int
+    username: str = Field(..., min_length=3, max_length=30, pattern=r'^[a-zA-Z0-9_]+$')
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+    full_name: str = Field(..., min_length=2, max_length=100)
+
+
+class SchoolClubMemberOut(BaseModel):
+    id: int
+    club_id: int
+    user: Optional[UserOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolJoinLinkCreate(BaseModel):
+    role: Optional[str] = 'student'
+    expires_at: Optional[datetime] = None
+    max_uses: Optional[int] = None
+
+
+class SchoolJoinLinkOut(BaseModel):
+    id: int
+    school_id: int
+    token: str
+    link: str
+    role: str
+    expires_at: Optional[datetime] = None
+    max_uses: Optional[int] = None
+    used_count: int = 0
+    active: bool = True
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolJoinPreview(BaseModel):
+    school_id: int
+    school_name: str
+    role: str
+    requires_login: bool = True
+    already_member: bool = False
+    valid: bool = True
+    message: Optional[str] = None
+
+
+class SchoolRoleBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    color: Optional[str] = '#22e079'
+    permissions: Optional[dict] = {}
+
+
+class SchoolRoleCreate(SchoolRoleBase):
+    pass
+
+
+class SchoolRoleOut(SchoolRoleBase):
+    id: int
+    school_id: int
+    is_system: bool = False
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolMemberRoleUpdate(BaseModel):
+    role: str
+
+
+class SchoolInvitationCreate(BaseModel):
+    username_or_email: str
+    role: Optional[str] = 'student'
+
+
+class SchoolInvitationOut(BaseModel):
+    id: int
+    school_id: int
+    user_id: int
+    invited_by_id: Optional[int] = None
+    role: str
+    status: str
+    created_at: datetime
+    school: Optional['SchoolOut'] = None
+    user: Optional[UserOut] = None
+    invited_by: Optional[UserOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+# --- Membership / Monetization Schemas ---
+class MembershipTierOut(BaseModel):
+    key: str
+    name: str
+    price_inr: int
+    color: str
+    boost: float
+    upload_mb: int
+    poll_options: int
+    perks: List[str] = []
+
+    class Config:
+        from_attributes = True
+
+
+class UserMembershipOut(BaseModel):
+    id: int
+    tier: str
+    status: str
+    started_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    auto_renew: bool = True
+    name: str
+    color: str
+    perks: List[str] = []
+    payment_provider: Optional[str] = None
+    days_remaining: Optional[int] = None
+    invoice_number: Optional[str] = None
+    is_early_bird: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class SubscribeRequest(BaseModel):
+    tier: str  # 'bronze', 'silver', 'gold', 'platinum'
+    payment_id: Optional[str] = None
+    order_id: Optional[str] = None
+
+
+class EarlyBirdClaimRequest(BaseModel):
+    tier: str  # 'bronze', 'silver', 'gold', 'platinum'
+    promo_code: Optional[str] = "EARLYBIRD_FREE30"
+    role_or_occupation: Optional[str] = None
+    field_of_study: Optional[str] = None
+    primary_goal: Optional[str] = None
+    institution_name: Optional[str] = None
+
+
+class PaymentTransactionOut(BaseModel):
+    id: int
+    tier: str
+    order_id: Optional[str] = None
+    payment_id: Optional[str] = None
+    amount_inr: int
+    currency: str = "INR"
+    status: str
+    provider: str
+    invoice_number: Optional[str] = None
+    plan_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RazorpayOrderOut(BaseModel):
+    order_id: str
+    amount: int
+    currency: str = "INR"
+    key_id: Optional[str] = None
+    tier: str
+    plan_name: str
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+
+
+class VerifyPaymentRequest(BaseModel):
+    tier: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+class PaymentConfigOut(BaseModel):
+    razorpay_key_id: Optional[str] = None
+    currency: str = "INR"
+    is_live: bool = False
+    early_bird_active: bool = True
+

@@ -2,11 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from backend.app.database import get_db
-from backend.app.models import Post, PostImage, PollOption, PollVote, Like, Comment, SavedPost, User, Notification
+from backend.app.models import Post, PostImage, PollOption, PollVote, Like, Comment, CommentLike, SavedPost, User, Notification, Follow, Interest, Skill, UserMembership, SchoolMember
+from backend.app import membership_config as mconfig
 from backend.app.schemas import PostCreate, PostOut, CommentCreate, CommentOut
 from backend.app.auth.security import get_current_user
+from backend.app.utils import _membership_info
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
+
+@router.get("/public/{post_id}")
+def get_public_post(post_id: int, db: Session = Depends(get_db)):
+    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False, Post.audience == 'public').first()
+    if not post: raise HTTPException(status_code=404, detail="Public post not found")
+    return {"id": post.id, "title": post.title, "content": post.content, "image_url": post.image_url, "created_at": post.created_at, "author": {"username": post.author.username, "full_name": post.author.profile.full_name if post.author.profile else post.author.username, "avatar_url": post.author.profile.avatar_url if post.author.profile else None}}
 
 def format_post_out(post: Post, current_user_id: int, db: Session) -> dict:
     author = post.author
@@ -56,6 +64,9 @@ def format_post_out(post: Post, current_user_id: int, db: Session) -> dict:
         "comments_count": comments_cnt,
         "user_liked": user_liked,
         "user_saved": user_saved,
+        "author_membership": _membership_info(author, db),
+        "audience": getattr(post, "audience", "public") or "public",
+        "audience_community_id": getattr(post, "audience_community_id", None),
         "created_at": post.created_at
     }
 
@@ -63,6 +74,8 @@ def format_post_out(post: Post, current_user_id: int, db: Session) -> dict:
 def get_feed(
     post_type: Optional[str] = None,
     user_id: Optional[int] = None,
+    feed: Optional[str] = None,  # 'recommended' (interest-based) or None (chronological)
+    school_only: bool = False,
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -74,8 +87,73 @@ def get_feed(
     if user_id:
         query = query.filter(Post.author_id == user_id)
 
-    posts = query.order_by(Post.created_at.desc()).offset(offset).limit(limit).all()
-    return [format_post_out(p, current_user.id, db) for p in posts]
+    posts = query.order_by(Post.created_at.desc()).all()
+
+    # Audience visibility: hide posts the current user isn't allowed to see.
+    # Free posts are always public; member posts may be 'followers' or a school 'community'.
+    following_ids = {
+        f.followed_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id).all()
+    }
+    user_school_ids = {
+        m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).all()
+    }
+
+    def can_view(p: Post) -> bool:
+        aud = getattr(p, 'audience', 'public') or 'public'
+        if aud == 'public':
+            return True
+        if p.author_id == current_user.id:
+            return True
+        if aud == 'followers' and p.author_id in following_ids:
+            return True
+        if aud == 'community' and getattr(p, 'audience_community_id', None) in user_school_ids:
+            return True
+        return False
+
+    posts = [p for p in posts if can_view(p)]
+    if feed == 'following':
+        posts = [p for p in posts if p.author_id in following_ids or p.author_id == current_user.id]
+    if school_only:
+        current_school = getattr(getattr(current_user, 'profile', None), 'school', None)
+        posts = [p for p in posts if getattr(getattr(p.author, 'profile', None), 'school', None) == current_school]
+    if feed == 'trending':
+        posts.sort(key=lambda p: (db.query(Like).filter(Like.post_id == p.id).count(), p.created_at), reverse=True)
+
+    # Interest / network based ranking ("For You" feed)
+    if feed == "recommended" and not user_id:
+        user_interests = {i.name for i in current_user.interests}
+        user_skills = {s.name for s in current_user.skills}
+        following_ids = {
+            f.followed_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id).all()
+        }
+
+        # Preload membership boosts for all candidate authors (avoid N+1)
+        author_ids = {p.author_id for p in posts}
+        memberships = db.query(UserMembership).filter(
+            UserMembership.user_id.in_(author_ids),
+            UserMembership.status == 'active'
+        ).all()
+        boost_map = {m.user_id: mconfig.tier_boost(m.tier) for m in memberships}
+
+        def score(p: Post) -> float:
+            s = 0.0
+            post_tags = set((p.tags or '').split(',')) if p.tags else set()
+            author = p.author
+            author_interests = {i.name for i in author.interests} if author else set()
+            author_skills = {sk.name for sk in author.skills} if author else set()
+            s += 3 * len(user_interests & post_tags)
+            s += 3 * len(user_interests & author_interests)
+            s += 2 * len(user_skills & author_skills)
+            if p.author_id in following_ids:
+                s += 5
+            # Paid members get a reach multiplier so supporters are discovered more
+            s = (s + 1) * boost_map.get(p.author_id, 1.0)
+            return s
+
+        ranked = sorted(posts, key=lambda p: (score(p), p.created_at), reverse=True)
+        posts = ranked
+
+    return [format_post_out(p, current_user.id, db) for p in posts[offset:offset + limit]]
 
 @router.post("", response_model=PostOut)
 def create_post(
@@ -88,6 +166,30 @@ def create_post(
     if p_type not in valid_types:
         p_type = 'COLLAB'
 
+    # Audiences: free users can only post publicly. Paid members may restrict to
+    # 'followers' or a specific school 'community' they belong to.
+    audience = (data.audience or 'public').lower()
+    community_id = data.community_id
+    if audience not in ('public', 'followers', 'community'):
+        audience = 'public'
+
+    from backend.app.quotas import active_tier
+    is_paid = active_tier(db, current_user.id) is not None
+    if audience != 'public' and not is_paid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only members can post to specific audiences (followers / community). Upgrade to choose who sees your post."
+        )
+    if audience == 'community':
+        if not community_id:
+            raise HTTPException(status_code=400, detail="community_id is required for community audience")
+        member = db.query(SchoolMember).filter(
+            SchoolMember.school_id == community_id,
+            SchoolMember.user_id == current_user.id
+        ).first()
+        if not member:
+            raise HTTPException(status_code=403, detail="You are not a member of that community")
+
     new_post = Post(
         author_id=current_user.id,
         title=data.title,
@@ -95,7 +197,9 @@ def create_post(
         post_type=p_type,
         reply_privacy=data.reply_privacy,
         tags=data.tags,
-        location=data.location
+        location=data.location,
+        audience=audience,
+        audience_community_id=community_id if audience == 'community' else None
     )
     db.add(new_post)
     db.flush()
@@ -205,6 +309,9 @@ def get_comments(post_id: int, db: Session = Depends(get_db), current_user: User
             "author_avatar": author.profile.avatar_url if author and author.profile else None,
             "parent_id": c.parent_id,
             "content": c.content,
+            "likes_count": db.query(CommentLike).filter(CommentLike.comment_id == c.id).count(),
+            "user_liked": db.query(CommentLike).filter(CommentLike.comment_id == c.id, CommentLike.user_id == current_user.id).first() is not None,
+            "author_membership": _membership_info(author, db),
             "created_at": c.created_at,
             "replies": []
         }
@@ -253,3 +360,20 @@ def add_comment(post_id: int, data: CommentCreate, current_user: User = Depends(
     db.commit()
     db.refresh(new_comment)
     return {"message": "Comment added successfully", "id": new_comment.id}
+
+
+@router.post("/comments/{comment_id}/like")
+def toggle_comment_like(comment_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    comment = db.query(Comment).filter(Comment.id == comment_id, Comment.is_deleted == False).first()
+    if not comment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+
+    existing = db.query(CommentLike).filter(CommentLike.comment_id == comment_id, CommentLike.user_id == current_user.id).first()
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"liked": False, "likes_count": db.query(CommentLike).filter(CommentLike.comment_id == comment_id).count()}
+
+    db.add(CommentLike(comment_id=comment_id, user_id=current_user.id))
+    db.commit()
+    return {"liked": True, "likes_count": db.query(CommentLike).filter(CommentLike.comment_id == comment_id).count()}

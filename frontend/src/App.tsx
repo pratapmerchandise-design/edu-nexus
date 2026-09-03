@@ -10,6 +10,12 @@ import { ContactPage } from './pages/ContactPage';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { VerifyEmailPage } from './pages/VerifyEmailPage';
+import { SchoolAdminPage } from './pages/app/SchoolAdminPage';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
+import { TermsOfServicePage } from './pages/TermsOfServicePage';
+import { StudentGuidelinesPage } from './pages/StudentGuidelinesPage';
+import { PublicSchoolsPage } from './pages/PublicSchoolsPage';
 
 import { FeedPage } from './pages/app/FeedPage';
 import { DiscoverPage } from './pages/app/DiscoverPage';
@@ -20,6 +26,11 @@ import { NotificationsPage } from './pages/app/NotificationsPage';
 import { ProfilePage } from './pages/app/ProfilePage';
 import { AdminPage } from './pages/app/AdminPage';
 import { SettingsPage } from './pages/app/SettingsPage';
+import { SchoolHubPage } from './pages/app/SchoolHubPage';
+import { MembershipPage } from './pages/app/MembershipPage';
+import { PublicProfilePage } from './pages/PublicProfilePage';
+import { PublicPostPage } from './pages/PublicPostPage';
+import { RejectInvitationPage } from './pages/RejectInvitationPage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean }> = ({ children, adminOnly }) => {
   const { user, loading } = useAuth();
@@ -34,6 +45,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean 
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (!user.is_email_verified) {
+    return <Navigate to="/verify-email" replace />;
   }
 
   if (adminOnly && user.role !== 'admin') {
@@ -51,10 +66,19 @@ export const AppContent: React.FC = () => {
       <Route path="/about" element={<AboutPage />} />
       <Route path="/features" element={<FeaturesPage />} />
       <Route path="/opportunities" element={<PublicOpportunitiesPage />} />
+      <Route path="/schools" element={<PublicSchoolsPage />} />
+      <Route path="/guidelines" element={<StudentGuidelinesPage />} />
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsOfServicePage />} />
       <Route path="/contact" element={<ContactPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/set-password" element={<ForgotPasswordPage />} />
+      <Route path="/reject-invitation" element={<RejectInvitationPage />} />
+      <Route path="/u/:username" element={<PublicProfilePage />} />
+      <Route path="/p/:id" element={<PublicPostPage />} />
 
       {/* Authenticated Application Shell Routes */}
       <Route path="/app" element={<Navigate to="/app/feed" replace />} />
@@ -67,7 +91,10 @@ export const AppContent: React.FC = () => {
       <Route path="/app/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/app/profile/:username" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/app/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+      <Route path="/app/school" element={<ProtectedRoute><SchoolHubPage /></ProtectedRoute>} />
+      <Route path="/app/membership" element={<ProtectedRoute><MembershipPage /></ProtectedRoute>} />
       <Route path="/app/admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
+      <Route path="/app/admin/schools" element={<ProtectedRoute adminOnly><SchoolAdminPage /></ProtectedRoute>} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />

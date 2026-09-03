@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, UniqueConstraint, TypeDecorator
+    Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, UniqueConstraint, TypeDecorator, JSON
 )
 from sqlalchemy.orm import relationship, backref
 from backend.app.database import Base
@@ -187,6 +187,20 @@ class Comment(Base):
     author = relationship('User', back_populates='comments')
     replies = relationship('Comment', backref=backref('parent', remote_side=[id]))
 
+
+class CommentLike(Base):
+    __tablename__ = 'comment_likes'
+
+    id = Column(Integer, primary_key=True, index=True)
+    comment_id = Column(Integer, ForeignKey('comments.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('comment_id', 'user_id', name='_user_comment_like_uc'),)
+
+    comment = relationship('Comment', backref='likes')
+    user = relationship('User')
+
+
 class SavedPost(Base):
     __tablename__ = 'saved_posts'
 
@@ -291,6 +305,13 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     status = Column(String(30), default='pending') # 'pending', 'accepted', 'rejected'
     initiator_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    is_group = Column(Boolean, default=False)
+    name = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+    avatar_url = Column(String(255), nullable=True)
+    only_admins_can_message = Column(Boolean, default=False)
+    only_admins_can_edit_settings = Column(Boolean, default=False)
+    is_public = Column(Boolean, default=False)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -304,9 +325,23 @@ class ConversationMember(Base):
     id = Column(Integer, primary_key=True, index=True)
     conversation_id = Column(Integer, ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    role = Column(String(30), default='member') # 'member', 'admin'
     __table_args__ = (UniqueConstraint('conversation_id', 'user_id', name='_conv_member_uc'),)
 
     conversation = relationship('Conversation', back_populates='members')
+    user = relationship('User')
+
+class GroupRequest(Base):
+    __tablename__ = 'group_requests'
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey('conversations.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    type = Column(String(30), nullable=False) # 'join_request', 'invitation'
+    status = Column(String(30), default='pending') # 'pending', 'accepted', 'rejected'
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    conversation = relationship('Conversation', backref='group_requests')
     user = relationship('User')
 
 class Message(Base):
@@ -318,10 +353,49 @@ class Message(Base):
     content = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
     is_delivered = Column(Boolean, default=False)
+    reply_to_id = Column(Integer, ForeignKey('messages.id', ondelete='SET NULL'), nullable=True)
+    attachment_url = Column(Text, nullable=True)
+    attachment_type = Column(String(50), nullable=True)
+    is_poll = Column(Boolean, default=False)
+    poll_multiple_answers = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False)
+    deleted_by_admin = Column(Boolean, default=False)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship('Conversation', back_populates='messages')
     sender = relationship('User')
+    replies = relationship('Message', backref=backref('replied_to', remote_side=[id]))
+    poll_options = relationship('MessagePollOption', back_populates='message', cascade='all, delete-orphan')
+
+class UserDeletedMessage(Base):
+    __tablename__ = 'user_deleted_messages'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
+
+    user = relationship('User')
+    message = relationship('Message')
+
+class MessagePollOption(Base):
+    __tablename__ = 'message_poll_options'
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
+    option_text = Column(String(200), nullable=False)
+
+    message = relationship('Message', back_populates='poll_options')
+    votes = relationship('MessagePollVote', back_populates='poll_option', cascade='all, delete-orphan')
+
+class MessagePollVote(Base):
+    __tablename__ = 'message_poll_votes'
+
+    id = Column(Integer, primary_key=True, index=True)
+    poll_option_id = Column(Integer, ForeignKey('message_poll_options.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+
+    poll_option = relationship('MessagePollOption', back_populates='votes')
+    user = relationship('User')
 
 class Notification(Base):
     __tablename__ = 'notifications'
@@ -360,3 +434,236 @@ class Block(Base):
     blocked_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint('blocker_id', 'blocked_id', name='_user_block_uc'),)
+
+# School Layer Models
+
+class School(Base):
+    __tablename__ = 'schools'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String(255), nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    members = relationship('SchoolMember', back_populates='school', cascade='all, delete-orphan')
+    clubs = relationship('SchoolClub', back_populates='school', cascade='all, delete-orphan')
+    events = relationship('SchoolEvent', back_populates='school', cascade='all, delete-orphan')
+    announcements = relationship('SchoolAnnouncement', back_populates='school', cascade='all, delete-orphan')
+
+
+class SchoolMember(Base):
+    __tablename__ = 'school_members'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    role = Column(String(50), nullable=False, default='student') # admin, ambassador, student
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School', back_populates='members')
+    user = relationship('User')
+    __table_args__ = (UniqueConstraint('school_id', 'user_id', name='_school_user_uc'),)
+
+
+class SchoolClub(Base):
+    __tablename__ = 'school_clubs'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    ambassador_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School', back_populates='clubs')
+    ambassador = relationship('User')
+    members = relationship('SchoolClubMember', back_populates='club', cascade='all, delete-orphan')
+
+
+class SchoolClubMember(Base):
+    __tablename__ = 'school_club_members'
+
+    id = Column(Integer, primary_key=True, index=True)
+    club_id = Column(Integer, ForeignKey('school_clubs.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    club = relationship('SchoolClub', back_populates='members')
+    user = relationship('User')
+    __table_args__ = (UniqueConstraint('club_id', 'user_id', name='_club_user_uc'),)
+
+
+class SchoolEvent(Base):
+    __tablename__ = 'school_events'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    event_type = Column(String(50), nullable=False, default='activity') # competition, activity
+    event_date = Column(UTCDateTime, nullable=True)
+    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School', back_populates='events')
+    created_by = relationship('User')
+
+
+class SchoolAnnouncement(Base):
+    __tablename__ = 'school_announcements'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    author_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School', back_populates='announcements')
+    author = relationship('User')
+class SchoolJoinRequest(Base):
+    __tablename__ = 'school_join_requests'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    status = Column(String(30), default='pending') # 'pending', 'approved', 'rejected'
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School', backref='join_requests')
+    user = relationship('User')
+    __table_args__ = (UniqueConstraint('school_id', 'user_id', name='_school_join_req_uc'),)
+
+
+class SchoolSuggestion(Base):
+    __tablename__ = 'school_suggestions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    contact_email = Column(String(120), nullable=True)
+    city = Column(String(100), nullable=True)
+    country = Column(String(100), nullable=True)
+    requester_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    status = Column(String(30), default='pending') # 'pending', 'approved', 'rejected'
+    admin_note = Column(Text, nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    requester = relationship('User')
+
+
+class SchoolInvitation(Base):
+    __tablename__ = 'school_invitations'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    invited_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    role = Column(String(50), nullable=False, default='student')
+    status = Column(String(30), default='pending')  # 'pending', 'accepted', 'declined', 'expired'
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School')
+    user = relationship('User', foreign_keys=[user_id])
+    invited_by = relationship('User', foreign_keys=[invited_by_id])
+
+
+class SchoolRole(Base):
+    __tablename__ = 'school_roles'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    color = Column(String(20), default='#22e079')
+    permissions = Column(JSON, default={})
+    is_system = Column(Boolean, default=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School')
+
+
+class SchoolJoinLink(Base):
+    __tablename__ = 'school_join_links'
+
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
+    token = Column(String(64), unique=True, index=True, nullable=False)
+    role = Column(String(50), default='student')
+    expires_at = Column(UTCDateTime, nullable=True)
+    max_uses = Column(Integer, nullable=True)
+    used_count = Column(Integer, default=0)
+    active = Column(Boolean, default=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    school = relationship('School')
+
+
+# Membership / Monetization
+class UsageEvent(Base):
+    """Monthly usage tracking for freemium quotas (new chats, group joins)."""
+    __tablename__ = 'usage_events'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    action = Column(String(40), nullable=False)  # 'new_conversation' | 'group_join'
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship('User')
+
+
+class UserMembership(Base):
+    __tablename__ = 'user_memberships'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    tier = Column(String(20), nullable=False, default='bronze')  # bronze, silver, gold, platinum
+    status = Column(String(20), default='active')  # 'active', 'cancelled', 'expired'
+    started_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(UTCDateTime, nullable=True)
+    auto_renew = Column(Boolean, default=True)
+    payment_provider = Column(String(30), nullable=True)  # 'razorpay', 'early_bird_promo', 'mock'
+    payment_id = Column(String(120), nullable=True)
+    order_id = Column(String(120), nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship('User')
+
+
+class PaymentTransaction(Base):
+    __tablename__ = 'payment_transactions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    tier = Column(String(20), nullable=False)
+    order_id = Column(String(120), nullable=True, index=True)
+    payment_id = Column(String(120), nullable=True, index=True)
+    signature = Column(String(255), nullable=True)
+    amount_inr = Column(Integer, nullable=False, default=0)
+    currency = Column(String(10), default='INR')
+    status = Column(String(30), default='paid')  # 'paid', 'created', 'failed'
+    provider = Column(String(30), default='early_bird_promo')  # 'early_bird_promo', 'razorpay', 'mock'
+    invoice_number = Column(String(60), nullable=True, unique=True, index=True)
+    plan_name = Column(String(50), nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship('User')
+
+
+class NewsletterSubscriber(Base):
+    __tablename__ = 'newsletter_subscribers'
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ContactMessage(Base):
+    __tablename__ = 'contact_messages'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False)
+    email = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))

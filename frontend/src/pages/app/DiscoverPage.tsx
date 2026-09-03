@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppLayout } from '../../components/AppLayout';
 import { api } from '../../services/api';
+import { MembershipBadge } from '../../components/MembershipBadge';
+import { UserAvatar } from '../../components/UserAvatar';
 import { renderContentWithHighlights, timeAgo } from '../../utils/textUtils';
 import type { User, Post } from '../../types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -13,8 +15,6 @@ export const DiscoverPage: React.FC = () => {
 
   // Search Filters
   const [query, setQuery] = useState(searchParams.get('q') || '');
-  const [selectedSkill, setSelectedSkill] = useState('');
-  const [selectedInterest, setSelectedInterest] = useState('');
 
   const [students, setStudents] = useState<User[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -25,8 +25,6 @@ export const DiscoverPage: React.FC = () => {
     try {
       const params = new URLSearchParams();
       if (query) params.append('query', query);
-      if (selectedSkill) params.append('skill', selectedSkill);
-      if (selectedInterest) params.append('interest', selectedInterest);
 
       const res = await api.get<User[]>(`/discover/students?${params.toString()}`);
       setStudents(res);
@@ -57,7 +55,7 @@ export const DiscoverPage: React.FC = () => {
     } else {
       fetchPosts();
     }
-  }, [activeTab, query, selectedSkill, selectedInterest]);
+  }, [activeTab, query]);
 
   const handleFollowToggle = async (username: string, currentStatus?: boolean) => {
     try {
@@ -77,19 +75,21 @@ export const DiscoverPage: React.FC = () => {
       const conv = await api.post<any>(`/conversations?target_username=${username}`);
       navigate(`/app/messages?conv=${conv.id}`);
     } catch (err: any) {
-      alert(err.message || 'Failed to start conversation');
+      const msg = err.message || 'Failed to start conversation';
+      if (/limit/i.test(msg)) {
+        if (confirm(`${msg}\n\nGo to Membership to upgrade?`)) navigate('/app/membership');
+      } else {
+        alert(msg);
+      }
     }
   };
-
-  const sampleSkills = ['Python', 'Web Development', 'UI/UX Design', 'Robotics', 'C++', 'Machine Learning'];
-  const sampleInterests = ['Artificial Intelligence', 'Programming', 'Research', 'Design', 'Business', 'Mathematics'];
 
   return (
     <AppLayout>
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="bg-card border border-border rounded-2xl p-6">
-          <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground mb-2">Discover The Nexus</h2>
-          <p className="text-xs text-muted-foreground">Search ambitious students, skills, location, and relevant posts.</p>
+          <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground mb-2">Find Your Next Collaborator</h2>
+          <p className="text-xs text-muted-foreground">Need someone for a video, game, team, idea, or creative project? Find interesting students by interests, skills, and school.</p>
 
           {/* Search Inputs */}
           <div className="mt-6 space-y-3">
@@ -97,47 +97,14 @@ export const DiscoverPage: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search by name, username, bio..."
+                placeholder="Search a person, skill, interest, or school..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="w-full bg-secondary border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
               />
             </div>
 
-            {/* Quick Skill & Interest Filter Badges */}
-            <div className="flex flex-wrap items-center gap-2 pt-2">
-              <span className="text-[10px] uppercase font-bold text-muted-foreground">Skills:</span>
-              {sampleSkills.map((sk) => (
-                <button
-                  key={sk}
-                  onClick={() => setSelectedSkill(selectedSkill === sk ? '' : sk)}
-                  className={`px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all ${
-                    selectedSkill === sk
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-secondary text-muted-foreground border border-border hover:text-foreground'
-                  }`}
-                >
-                  {sk}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase font-bold text-muted-foreground">Interests:</span>
-              {sampleInterests.map((intr) => (
-                <button
-                  key={intr}
-                  onClick={() => setSelectedInterest(selectedInterest === intr ? '' : intr)}
-                  className={`px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all ${
-                    selectedInterest === intr
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-secondary text-muted-foreground border border-border hover:text-foreground'
-                  }`}
-                >
-                  {intr}
-                </button>
-              ))}
-            </div>
+            <p className="text-[11px] text-muted-foreground pt-1">Search any keyword—such as a hobby, sport, language, skill, school, city, or interest.</p>
           </div>
 
           {/* Navigation Tabs */}
@@ -176,13 +143,17 @@ export const DiscoverPage: React.FC = () => {
                 <div key={student.id} className="ui-card p-5 space-y-4 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center gap-3">
-                      <img
-                        src={student.profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.username}`}
-                        alt={student.username}
-                        className="w-12 h-12 rounded-full border-2 border-primary object-cover"
+                      <UserAvatar
+                        src={student.profile?.avatar_url}
+                        username={student.username}
+                        membership={student.membership}
+                        size={48}
                       />
                       <div className="min-w-0 flex-1">
-                        <h4 className="text-sm font-bold text-foreground truncate">{student.profile?.full_name || student.username}</h4>
+                        <h4 className="text-sm font-bold text-foreground truncate flex items-center gap-1.5">
+                          {student.profile?.full_name || student.username}
+                          <MembershipBadge membership={student.membership} size={15} />
+                        </h4>
                         <p className="text-xs text-primary font-medium truncate">@{student.username}</p>
                         {student.profile?.school && (
                           <p className="text-[10px] text-muted-foreground truncate">📍 {student.profile.school}</p>
@@ -235,16 +206,29 @@ export const DiscoverPage: React.FC = () => {
           )
         ) : (
           <div className="space-y-4">
-            {posts.map((post) => (
-              <div key={post.id} className="ui-card p-5 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="post-badge">{post.post_type}</span>
-                  <span className="text-[10px] text-muted-foreground">{new Date(post.created_at).toLocaleDateString()} • {timeAgo(post.created_at)}</span>
+            {posts.map((post) => {
+              const label = post.post_type === 'COLLAB' ? 'Collaboration'
+                : post.post_type === 'IDEA' ? 'Project Idea'
+                : post.post_type === 'HELP' ? 'Need Help'
+                : post.post_type === 'WIN' ? 'Win & Milestone'
+                : post.post_type === 'POLL' ? 'Poll'
+                : post.post_type;
+              return (
+                <div key={post.id} className="ui-card p-5 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">{label}</span>
+                    <span className="text-[10px] text-muted-foreground">{new Date(post.created_at).toLocaleDateString()} • {timeAgo(post.created_at)}</span>
+                  </div>
+                  {post.title && <h4 className="text-sm font-bold text-foreground">{post.title}</h4>}
+                  <p className="text-xs text-foreground/90 whitespace-pre-wrap">{renderContentWithHighlights(post.content)}</p>
+                  {post.images && post.images.length > 0 && (
+                    <div className="rounded-2xl overflow-hidden border border-border/80 bg-secondary/30 flex items-center justify-center mt-2">
+                      <img src={post.images[0]} alt="Post visual" className="w-full max-h-[500px] object-contain rounded-2xl" loading="lazy" />
+                    </div>
+                  )}
                 </div>
-                {post.title && <h4 className="text-sm font-bold text-foreground uppercase">{post.title}</h4>}
-                <p className="text-xs text-foreground/90 whitespace-pre-wrap">{renderContentWithHighlights(post.content)}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

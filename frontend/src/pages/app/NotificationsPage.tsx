@@ -31,11 +31,12 @@ export const NotificationsPage: React.FC = () => {
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
       );
+    } catch (e) {
+      console.error(e);
+    } finally {
       if (link) {
         navigate(link);
       }
-    } catch (e) {
-      console.error(e);
     }
   };
 

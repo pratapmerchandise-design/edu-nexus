@@ -28,7 +28,17 @@ export const PublicNavbar: React.FC = () => {
         <Link to="/contact">Contact</Link>
       </nav>
 
-      <div className="nav-actions">
+      <div className="nav-actions flex items-center gap-2.5">
+        <Link
+          to="/signup"
+          className="hidden sm:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/25 border border-emerald-400 text-white text-xs font-bold hover:bg-emerald-500/35 transition-all shadow-[0_0_15px_rgba(34,224,121,0.3)]"
+          style={{ color: '#ffffff' }}
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span style={{ color: '#ffffff' }} className="font-black text-xs tracking-wide">
+            🎁 1 Mo Free Pass
+          </span>
+        </Link>
         <Link className="text-button" to="/login">Login</Link>
         <button 
           className="button button-small button-solid"

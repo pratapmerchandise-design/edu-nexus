@@ -1,5 +1,3 @@
-import React from 'react';
-
 export const renderContentWithHighlights = (content: string) => {
   if (!content) return null;
   return content.split(/(\s+)/).map((word, i) => {
@@ -41,4 +39,9 @@ export const timeAgo = (dateString: string) => {
     }
   }
   return "just now";
+};
+
+export const isVideoUrl = (url?: string | null): boolean => {
+  if (!url) return false;
+  return /\.(mp4|webm|mov|mkv|avi|m4v)(\?.*)?$/i.test(url);
 };

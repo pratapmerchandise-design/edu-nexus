@@ -1,0 +1,4 @@
+import React, { useEffect, useState } from 'react';
+import { useSearchParams, Link } from 'react-router-dom';
+import { api } from '../services/api';
+export const RejectInvitationPage: React.FC = () => { const [params] = useSearchParams(); const [message,setMessage]=useState('Declining invitation…'); useEffect(()=>{ api.post(`/schools/admin-invitations/${params.get('token')}/reject`).then(()=>setMessage('Invitation declined.')).catch((e)=>setMessage(e.message || 'This invitation is no longer valid.')); },[params]); return <main className="min-h-screen bg-background flex items-center justify-center p-6"><div className="bg-card border border-border rounded-3xl p-8 max-w-md text-center space-y-4"><h1 className="text-xl font-bold">EduNexus invitation</h1><p className="text-sm text-muted-foreground">{message}</p><Link to="/" className="button button-primary inline-flex">Return to EduNexus</Link></div></main>; };

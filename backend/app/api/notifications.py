@@ -45,7 +45,7 @@ def mark_read(
         Notification.recipient_id == current_user.id
     ).first()
 
-    if notnotif:
+    if not notif:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
 
     notif.is_read = True
