@@ -33,13 +33,13 @@ sudo apt update -y
 sudo DEBIAN_FRONTEND=noninteractive apt install -y \
     python3-pip python3-venv git nginx certbot python3-certbot-nginx curl
 
-# Node.js 20
-if ! command -v node &> /dev/null; then
+# Node.js and NPM
+if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
     echo "Installing Node.js 20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs npm
 fi
-echo "✅ Node $(node -v), Python $(python3 --version) installed."
+echo "✅ Node $(node -v 2>/dev/null), NPM $(npm -v 2>/dev/null), Python $(python3 --version) installed."
 
 # 2. Clone or pull repository
 REPO_DIR="/var/www/edunexus"
