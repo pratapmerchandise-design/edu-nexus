@@ -160,11 +160,20 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 
-# Configure Firewall
+# Configure Firewall (UFW + Oracle Cloud iptables compatibility)
 sudo ufw allow 22/tcp || true
 sudo ufw allow 80/tcp || true
 sudo ufw allow 443/tcp || true
 echo "y" | sudo ufw enable || true
+
+# Oracle Cloud Ubuntu includes default iptables reject rules that need explicit ports:
+if command -v iptables &> /dev/null; then
+    sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT || true
+    sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT || true
+    if command -v netfilter-persistent &> /dev/null; then
+        sudo netfilter-persistent save || true
+    fi
+fi
 
 echo "======================================================"
 echo "  🎉 EduNexus is LIVE on AWS EC2!                     "
