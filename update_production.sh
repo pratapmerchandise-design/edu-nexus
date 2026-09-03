@@ -69,6 +69,9 @@ sudo systemctl restart edunexus
 sudo systemctl reload nginx
 
 echo "[4/4] Activating Free SSL Certificate (HTTPS) for edu-nexus.online..."
+if ! command -v certbot &> /dev/null; then
+    sudo apt-get update -y && sudo apt-get install -y certbot python3-certbot-nginx
+fi
 sudo certbot --nginx -d edu-nexus.online -d www.edu-nexus.online --non-interactive --agree-tos -m edunexus.infodesk@gmail.com --redirect || true
 
 echo "======================================================"
