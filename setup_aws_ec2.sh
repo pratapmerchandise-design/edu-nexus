@@ -38,6 +38,10 @@ if [ ! -d "$REPO_DIR" ]; then
     sudo mkdir -p "$REPO_DIR"
     sudo chown -R $USER:$USER "$REPO_DIR"
     git clone https://github.com/pratapmerchandise-design/edu-nexus.git "$REPO_DIR"
+else
+    echo "[4/8] Pulling latest repository code..."
+    cd "$REPO_DIR"
+    git pull origin main || true
 fi
 
 cd "$REPO_DIR"
@@ -50,6 +54,7 @@ fi
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r backend/requirements.txt
+pip install "email-validator>=2.1.0"
 
 # Create production backend/.env if not present
 SECRET_KEY_GEN=$(python3 -c "import secrets; print(secrets.token_hex(32))")
