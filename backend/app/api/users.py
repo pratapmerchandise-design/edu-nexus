@@ -45,6 +45,24 @@ def update_profile(data: ProfileUpdate, current_user: User = Depends(get_current
         profile.city = data.city
     if data.school is not None:
         profile.school = data.school
+        from backend.app.models import School, SchoolMember
+        
+        # Remove existing membership
+        db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).delete()
+        
+        if data.school.strip():
+            school_obj = db.query(School).filter(School.name.ilike(data.school)).first()
+            if not school_obj:
+                school_obj = School(name=data.school)
+                db.add(school_obj)
+                db.flush()
+            
+            school_member = SchoolMember(
+                school_id=school_obj.id,
+                user_id=current_user.id,
+                role='student'
+            )
+            db.add(school_member)
     if data.grade is not None:
         profile.grade = data.grade
     if data.goals is not None:
@@ -137,3 +155,9 @@ def unfollow_user(username: str, current_user: User = Depends(get_current_user),
         db.commit()
 
     return {"message": "Unfollowed successfully", "is_following": False}
+
+@router.delete("/me")
+def delete_my_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.delete(current_user)
+    db.commit()
+    return {"message": "Account deleted successfully"}

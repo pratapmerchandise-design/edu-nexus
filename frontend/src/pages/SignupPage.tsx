@@ -5,6 +5,7 @@ import { api } from '../services/api';
 import { passwordRules, isStrongPassword } from '../utils/passwordPolicy';
 import { AlertCircle } from 'lucide-react';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { SchoolAutocompleteInput } from '../components/SchoolAutocompleteInput';
 
 const GRADES = ['Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'];
 
@@ -367,16 +368,14 @@ export const SignupPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                    School / Institution <span className="text-muted-foreground/70 normal-case">(optional)</span>
+                    School / Institution <span className="text-muted-foreground/70 normal-case">(search or select)</span>
                   </label>
-                  <input
-                    type="text"
+                  <SchoolAutocompleteInput
                     value={form.school}
-                    onChange={(e) => setForm({ ...form, school: e.target.value })}
-                    placeholder="e.g. Modern School, Stanford, DPS"
-                    className="w-full bg-secondary border border-border rounded-xl px-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                    onChange={(schoolName) => setForm({ ...form, school: schoolName })}
+                    placeholder="Search campus, e.g. DPS, Modern School..."
                   />
-                  <p className="text-[10px] text-muted-foreground mt-1">School Hubs are private. Your school admin can invite you directly.</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">Select your exact campus from verified schools to connect with classmates.</p>
                 </div>
 
                 <div>

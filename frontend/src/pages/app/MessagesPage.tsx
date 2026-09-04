@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AppLayout } from '../../components/AppLayout';
-import { api } from '../../services/api';
+import { api, uploadFile } from '../../services/api';
 import type { Conversation, Message } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Send, Ban, MessageSquare, Check, CheckCheck, Smile, Paperclip, Mic, Square, X, XCircle, Reply, ImageIcon, Lock, Camera, BarChart2, MoreHorizontal, Trash, Shield, Film, FileText } from 'lucide-react';
+import { Send, Ban, MessageSquare, Check, CheckCheck, Smile, Paperclip, Mic, Square, X, XCircle, Reply, ImageIcon, Lock, Camera, BarChart2, MoreHorizontal, Trash, Shield, Film, FileText, Sparkles } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { CreateGroupModal } from '../../components/CreateGroupModal';
 import { InviteModal } from '../../components/InviteModal';
 import { CameraModal } from './components/CameraModal';
 import { CreatePollModal } from './components/CreatePollModal';
 import { MembershipBadge } from '../../components/MembershipBadge';
+import { GifPicker } from '../../components/GifPicker';
+import { StickerPicker } from '../../components/StickerPicker';
+import { renderContentWithHighlights, isStickerOnlyContent } from '../../utils/textUtils';
 
 export const MessagesPage: React.FC = () => {
   const { user } = useAuth();
@@ -111,6 +114,8 @@ export const MessagesPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
   const [showPollModal, setShowPollModal] = useState(false);
   const [attachment, setAttachment] = useState<{ url: string; type: 'image' | 'video' | 'audio' | 'file' } | null>(null);
@@ -128,12 +133,10 @@ export const MessagesPage: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const formData = new FormData();
-    formData.append('file', file);
-    
     try {
       setLoading(true);
-      const res = await api.post<{url: string}>('/upload', formData);
+      const data = await uploadFile(file);
+      setPreviewImage(data.url);
       const fileType = file.type.startsWith('video/')
         ? 'video'
         : file.type.startsWith('audio/')
@@ -141,7 +144,7 @@ export const MessagesPage: React.FC = () => {
         : file.type.startsWith('image/')
         ? 'image'
         : 'file';
-      setAttachment({ url: res.url, type: fileType });
+      setAttachment({ url: data.url, type: fileType });
     } catch (err: any) {
       alert(err.message || 'Failed to upload file');
     } finally {
@@ -163,13 +166,12 @@ export const MessagesPage: React.FC = () => {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'audio_message.webm');
+        const file = new File([audioBlob], 'audio_message.webm', { type: 'audio/webm' });
         
         try {
           setLoading(true);
-          const res = await api.post<{url: string}>('/upload', formData);
-          setAttachment({ url: res.url, type: 'audio' });
+          const data = await uploadFile(file);
+          setAttachment({ url: data.url, type: 'audio' });
         } catch (err: any) {
           alert(err.message || 'Failed to upload audio');
         } finally {
@@ -309,14 +311,10 @@ export const MessagesPage: React.FC = () => {
 
   const handleCapturePhoto = async (file: File) => {
     setShowCameraModal(false);
-    const formData = new FormData();
-    formData.append('file', file);
 
     try {
-      const res = await api.post<{ url: string }>('/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      setAttachment({ url: res.url, type: 'image' });
+      const data = await uploadFile(file);
+      setAttachment({ url: data.url, type: 'image' });
     } catch (error) {
       alert('Failed to upload photo');
     }
@@ -768,9 +766,26 @@ export const MessagesPage: React.FC = () => {
                               <audio src={m.attachment_url} controls className="w-[240px] max-w-full mb-1 h-10 rounded-md" />
                             )}
                             {m.attachment_url && !['image', 'video', 'audio'].includes(m.attachment_type || '') && (
-                              <a href={m.attachment_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 rounded-lg bg-black/10 dark:bg-white/10 mb-2 hover:underline text-[11px] font-bold">
-                                <FileText className="w-4 h-4" /> Download Attached File
-                              </a>
+                              <div className={`mt-1 border rounded-xl overflow-hidden ${isMe ? 'border-primary-foreground/30 bg-black/10' : 'border-border bg-secondary/50'}`}>
+                                {m.attachment_url.toLowerCase().endsWith('.pdf') ? (
+                                  <iframe src={m.attachment_url} className="w-full h-[300px] border-none bg-white" title="PDF Document" />
+                                ) : (
+                                  <div className={`p-6 flex items-center justify-center ${isMe ? 'bg-black/5' : 'bg-secondary/30'}`}>
+                                    <FileText className="w-10 h-10 opacity-50" />
+                                  </div>
+                                )}
+                                <div className={`p-3 border-t flex items-center justify-between gap-3 text-xs ${isMe ? 'border-primary-foreground/20' : 'border-border'}`}>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="truncate font-bold text-[11px] uppercase tracking-wider">
+                                      {m.attachment_url.split('/').pop() || 'Document'}
+                                    </span>
+                                    <span className="text-[10px] opacity-70 mt-0.5">Click Open to view</span>
+                                  </div>
+                                  <a href={m.attachment_url} target="_blank" rel="noopener noreferrer" className={`px-4 py-2 rounded-lg font-bold shrink-0 transition-colors ${isMe ? 'bg-primary-foreground text-primary hover:bg-primary-foreground/90' : 'bg-primary text-primary-foreground hover:bg-primary/90'}`}>
+                                    Open
+                                  </a>
+                                </div>
+                              </div>
                             )}
                             {m.is_poll && (
                               <div className="mt-2 space-y-2">
@@ -791,9 +806,17 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
                                   <Ban className="inline-block w-3 h-3 mr-1" />
                                   {m.content}
                                 </span>
-                              ) : (
-                                !m.is_poll && m.content && !m.content.startsWith('[Attached') && m.content
-                              )}
+                              ) : !m.is_poll && m.content && !m.content.startsWith('[Attached') ? (
+                                isStickerOnlyContent(m.content) ? (
+                                  <div className="flex flex-wrap gap-1">
+                                    {m.content.trim().split(/\s+/).map((url, i) => (
+                                      <img key={i} src={url} alt="sticker" className="w-24 h-24 sm:w-28 sm:h-28" draggable={false} />
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="break-words whitespace-pre-wrap">{renderContentWithHighlights(m.content)}</span>
+                                )
+                              ) : null}
                             </div>
                           </div>
                           
@@ -899,11 +922,16 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
                   {attachment && (
                     <div className="px-4 py-2 bg-secondary/30 flex items-center justify-between border-b border-border">
                       <div className="flex items-center gap-2 text-xs">
-                        {attachment.type === 'image' && <ImageIcon className="w-4 h-4 text-primary" />}
-                        {attachment.type === 'video' && <Film className="w-4 h-4 text-primary" />}
-                        {attachment.type === 'audio' && <Mic className="w-4 h-4 text-primary" />}
-                        {attachment.type === 'file' && <FileText className="w-4 h-4 text-primary" />}
-                        <span className="text-muted-foreground truncate max-w-[200px]">Attached {attachment.type}</span>
+                        {attachment.type === 'image' ? (
+                          <img src={attachment.url} alt="" className="w-8 h-8 rounded-lg object-cover border border-border" />
+                        ) : attachment.type === 'video' ? (
+                          <Film className="w-4 h-4 text-primary" />
+                        ) : attachment.type === 'audio' ? (
+                          <Mic className="w-4 h-4 text-primary" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-primary" />
+                        )}
+                        <span className="text-foreground font-medium truncate max-w-[200px]">Attached {attachment.type === 'image' && attachment.url.includes('.gif') ? 'GIF' : attachment.type}</span>
                       </div>
                       <button onClick={() => setAttachment(null)} className="text-red-400 hover:text-red-500">
                         <XCircle className="w-4 h-4" />
@@ -915,15 +943,58 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
                       <EmojiPicker onEmojiClick={handleEmojiClick} theme={Theme.DARK} />
                     </div>
                   )}
+                  {showGifPicker && (
+                    <GifPicker
+                      onSelect={(gifUrl) => {
+                        setAttachment({
+                          type: 'image',
+                          url: gifUrl,
+                        });
+                        setShowGifPicker(false);
+                      }}
+                      onClose={() => setShowGifPicker(false)}
+                      title="Send a GIF"
+                    />
+                  )}
+                  {showStickerPicker && (
+                    <StickerPicker
+                      onSelect={async (sticker) => {
+                        setShowStickerPicker(false);
+                        setInputMessage(sticker.url);
+                        setTimeout(() => {
+                          const form = document.querySelector<HTMLFormElement>('form[data-chat-send]');
+                          form?.requestSubmit();
+                        }, 0);
+                      }}
+                      onClose={() => setShowStickerPicker(false)}
+                      title="Send a Sticker"
+                    />
+                  )}
                   
                   {activeConv.is_group && activeConv.only_admins_can_message && activeConv.members?.find((m: any) => m.user.id === user?.id)?.role !== 'admin' ? (
                     <div className="p-4 text-center text-sm font-medium text-muted-foreground bg-secondary/50 border-t border-border">
                       Only admins can send messages
                     </div>
                   ) : (
-                    <form onSubmit={handleSendMessage} className="p-3 flex gap-2 w-full items-center">
-                    <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-2 rounded-full text-muted-foreground hover:bg-border transition-colors">
+                    <form data-chat-send onSubmit={handleSendMessage} className="p-3 flex gap-2 w-full items-center">
+                    <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-2 rounded-full text-muted-foreground hover:bg-border transition-colors" title="Add Emoji">
                       <Smile className="w-4 h-4" />
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowGifPicker(true)} 
+                      className={`p-2 rounded-full transition-colors flex items-center justify-center font-black text-[10px] leading-none ${showGifPicker ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:bg-border'}`}
+                      title="Send a GIF"
+                    >
+                      <span className="border border-current px-1 py-0.5 rounded tracking-tight">GIF</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowStickerPicker(true)}
+                      className={`p-2 rounded-full transition-all flex items-center justify-center ${showStickerPicker ? 'text-primary bg-primary/10 ring-1 ring-primary/40' : 'text-muted-foreground hover:text-foreground hover:bg-border'}`}
+                      title="Send a Sticker (Members)"
+                    >
+                      <Sparkles className="w-4 h-4" />
                     </button>
                     <button type="button" onClick={() => setShowCameraModal(true)} className="p-2 rounded-full text-muted-foreground hover:bg-border transition-colors">
                       <Camera className="w-4 h-4" />
@@ -1137,16 +1208,8 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
           onClose={() => setShowAvatarCamera(false)}
           onCapture={async (file: File) => {
             try {
-              const formData = new FormData();
-              formData.append('file', file);
-              const token = localStorage.getItem('token');
-              const res = await fetch('http://localhost:8000/api/upload', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
-                body: formData
-              });
-              const data = await res.json();
-              if (res.ok && data.url) {
+              const data = await uploadFile(file);
+              if (data && data.url) {
                 setEditGroupInfo({...editGroupInfo, avatar_url: data.url});
               }
             } catch (e) {

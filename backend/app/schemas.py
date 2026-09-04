@@ -5,7 +5,7 @@ from datetime import datetime
 # --- Auth & User Schemas ---
 class UserRegister(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
-    username: str = Field(..., min_length=3, max_length=30, pattern=r'^[a-zA-Z0-9_]+$')
+    username: str = Field(..., min_length=3, max_length=30, pattern=r'^[a-zA-Z0-9_.\-]+$')
     email: EmailStr
     password: str = Field(..., min_length=6)
     dob: Optional[str] = None
@@ -118,12 +118,14 @@ class PollOptionOut(BaseModel):
 class PostCreate(BaseModel):
     title: Optional[str] = None
     content: str
-    post_type: str = "COLLAB" # HELP, WIN, IDEA, COLLAB, POLL
+    post_type: str = "CASUAL" # HELP, WIN, IDEA, COLLAB, POLL, CASUAL
     image_url: Optional[str] = None
     poll_options: Optional[List[str]] = None
     reply_privacy: str = "everyone"
     tags: Optional[str] = None
     location: Optional[str] = None
+    audience: Optional[str] = "public"
+    community_id: Optional[int] = None
 
 class CommentCreate(BaseModel):
     content: str

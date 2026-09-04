@@ -11,7 +11,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
-import { SchoolAdminPage } from './pages/app/SchoolAdminPage';
+
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { TermsOfServicePage } from './pages/TermsOfServicePage';
 import { StudentGuidelinesPage } from './pages/StudentGuidelinesPage';
@@ -94,7 +94,7 @@ export const AppContent: React.FC = () => {
       <Route path="/app/school" element={<ProtectedRoute><SchoolHubPage /></ProtectedRoute>} />
       <Route path="/app/membership" element={<ProtectedRoute><MembershipPage /></ProtectedRoute>} />
       <Route path="/app/admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
-      <Route path="/app/admin/schools" element={<ProtectedRoute adminOnly><SchoolAdminPage /></ProtectedRoute>} />
+
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />

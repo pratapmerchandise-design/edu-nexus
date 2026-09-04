@@ -60,7 +60,7 @@ export interface Post {
   author_school?: string;
   title?: string;
   content: string;
-  post_type: 'HELP' | 'WIN' | 'IDEA' | 'COLLAB' | 'POLL';
+  post_type: 'HELP' | 'WIN' | 'IDEA' | 'COLLAB' | 'POLL' | 'CASUAL';
   images: string[];
   poll_options: PollOption[];
   likes_count: number;
@@ -70,6 +70,7 @@ export interface Post {
   author_membership?: MembershipInfo | null;
   audience?: string;
   audience_community_id?: number | null;
+  reply_privacy?: string;
   created_at: string;
   location?: string;
 }
@@ -276,6 +277,7 @@ export interface MembershipTier {
   poll_options: number;
   new_conversations_per_month?: number;
   group_joins_per_month?: number;
+  sticker_packs?: string[];
   perks: string[];
 }
 

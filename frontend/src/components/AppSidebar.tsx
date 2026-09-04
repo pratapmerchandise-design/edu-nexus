@@ -26,7 +26,6 @@ export const AppSidebar: React.FC = () => {
 
   const adminLinks = [
     { label: 'Moderation Queue', path: '/app/admin', icon: Shield },
-    { label: 'School Directory', path: '/app/admin/schools', icon: Building2 },
   ];
 
   return (

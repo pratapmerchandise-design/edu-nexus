@@ -114,8 +114,14 @@ def get_feed(
     if feed == 'following':
         posts = [p for p in posts if p.author_id in following_ids or p.author_id == current_user.id]
     if school_only:
-        current_school = getattr(getattr(current_user, 'profile', None), 'school', None)
-        posts = [p for p in posts if getattr(getattr(p.author, 'profile', None), 'school', None) == current_school]
+        current_school = (getattr(getattr(current_user, 'profile', None), 'school', None) or '').strip().lower()
+        if current_school:
+            posts = [
+                p for p in posts 
+                if (getattr(getattr(p.author, 'profile', None), 'school', None) or '').strip().lower() == current_school
+            ]
+        else:
+            posts = []
     if feed == 'trending':
         posts.sort(key=lambda p: (db.query(Like).filter(Like.post_id == p.id).count(), p.created_at), reverse=True)
 
@@ -161,10 +167,10 @@ def create_post(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    valid_types = ['HELP', 'WIN', 'IDEA', 'COLLAB', 'POLL']
-    p_type = data.post_type.upper() if data.post_type else 'COLLAB'
+    valid_types = ['HELP', 'WIN', 'IDEA', 'COLLAB', 'POLL', 'CASUAL']
+    p_type = data.post_type.upper() if data.post_type else 'CASUAL'
     if p_type not in valid_types:
-        p_type = 'COLLAB'
+        p_type = 'CASUAL'
 
     # Audiences: free users can only post publicly. Paid members may restrict to
     # 'followers' or a specific school 'community' they belong to.
@@ -330,6 +336,47 @@ def add_comment(post_id: int, data: CommentCreate, current_user: User = Depends(
     post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False).first()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    # Reply privacy enforcement
+    if post.author_id != current_user.id:
+        privacy_raw = (post.reply_privacy or "everyone").lower()
+        privacy_set = {p.strip() for p in privacy_raw.split(",") if p.strip()}
+        
+        if "everyone" not in privacy_set:
+            allowed = False
+            
+            # 1. School check
+            if "school" in privacy_set or "my_school" in privacy_set:
+                cur_school = (getattr(getattr(current_user, 'profile', None), 'school', None) or '').strip().lower()
+                author_school = (getattr(getattr(post.author, 'profile', None), 'school', None) or '').strip().lower()
+                if cur_school and author_school and cur_school == author_school:
+                    allowed = True
+                else:
+                    cur_school_ids = {m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).all()}
+                    author_school_ids = {m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == post.author_id).all()}
+                    if cur_school_ids and author_school_ids and (cur_school_ids & author_school_ids):
+                        allowed = True
+            
+            # 2. Followers check
+            if not allowed and "followers" in privacy_set:
+                is_follower = db.query(Follow).filter(
+                    Follow.follower_id == current_user.id,
+                    Follow.followed_id == post.author_id
+                ).first() is not None
+                if is_follower:
+                    allowed = True
+
+            # 3. Mentioned check
+            if not allowed and "mentioned" in privacy_set:
+                tag = f"@{current_user.username.lower()}"
+                if tag in (post.content or "").lower() or tag in (post.title or "").lower():
+                    allowed = True
+
+            if not allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="The author has restricted who can reply to this post."
+                )
 
     new_comment = Comment(
         post_id=post_id,

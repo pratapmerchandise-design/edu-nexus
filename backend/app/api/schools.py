@@ -36,6 +36,22 @@ def get_my_schools(
 ):
     """Get schools the current user is a member of"""
     school_members = db.query(models.SchoolMember).filter(models.SchoolMember.user_id == current_user.id).all()
+    if not school_members and current_user.profile and current_user.profile.school and current_user.profile.school.strip():
+        school_name = current_user.profile.school.strip()
+        school_obj = db.query(models.School).filter(models.School.name.ilike(school_name)).first()
+        if not school_obj:
+            school_obj = models.School(name=school_name)
+            db.add(school_obj)
+            db.flush()
+        new_member = models.SchoolMember(
+            school_id=school_obj.id,
+            user_id=current_user.id,
+            role='student'
+        )
+        db.add(new_member)
+        db.commit()
+        db.refresh(new_member)
+        return [school_obj]
     return [member.school for member in school_members if member.school]
 
 
@@ -50,6 +66,70 @@ def get_my_school_invitations(
         models.SchoolInvitation.status == 'pending'
     ).order_by(models.SchoolInvitation.created_at.desc()).all()
     return invites
+
+
+import re
+
+COMMON_ACRONYMS = {
+    'dps': 'delhi public school',
+    'kv': 'kendriya vidyalaya',
+    'dav': 'dav public',
+    'iit': 'indian institute of technology',
+    'nit': 'national institute of technology',
+    'bits': 'birla institute',
+    'srcc': 'shri ram college',
+    'step': 'step by step',
+}
+
+@router.get("/search", response_model=List[schemas.SchoolOut])
+def search_schools(
+    q: Optional[str] = "",
+    limit: int = 15,
+    db: Session = Depends(get_db)
+):
+    """Smart autocomplete search for schools with acronym expansion and campus matching."""
+    clean_q = (q or "").strip().lower()
+    all_schools = db.query(models.School).all()
+    if not clean_q:
+        return all_schools[:limit]
+
+    # Clean alphanumeric version
+    raw_alpha_q = re.sub(r'[^a-z0-9]', '', clean_q)
+
+    # Expanded query with acronyms
+    expanded_alpha_q = raw_alpha_q
+    for acr, full_name in COMMON_ACRONYMS.items():
+        if acr in clean_q:
+            expanded_alpha_q = re.sub(r'[^a-z0-9]', '', clean_q.replace(acr, full_name))
+            break
+
+    scored = []
+    for s in all_schools:
+        s_name_lower = s.name.lower()
+        s_alpha = re.sub(r'[^a-z0-9]', '', s_name_lower)
+        
+        score = 999
+        # Exact prefix match
+        if s_name_lower.startswith(clean_q):
+            score = 0
+        # Substring in raw name
+        elif clean_q in s_name_lower:
+            score = 1
+        # Expanded acronym prefix
+        elif s_alpha.startswith(expanded_alpha_q):
+            score = 2
+        # Expanded acronym substring
+        elif expanded_alpha_q in s_alpha:
+            score = 3
+        # Raw alphanumeric substring
+        elif raw_alpha_q in s_alpha:
+            score = 4
+        
+        if score < 999:
+            scored.append((score, s))
+
+    scored.sort(key=lambda item: (item[0], item[1].name))
+    return [item[1] for item in scored[:limit]]
 
 
 @router.get("", response_model=List[schemas.SchoolOut])

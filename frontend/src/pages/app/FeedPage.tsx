@@ -8,8 +8,10 @@ import { SpotlightCard } from '../../components/reactbits/SpotlightCard';
 import { AuroraGlow } from '../../components/reactbits/AuroraGlow';
 import type { Post, Comment } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
-import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/textUtils';
-import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, ChevronUp, CornerDownRight, Send } from 'lucide-react';
+import { renderContentWithHighlights, timeAgo, isVideoUrl, isStickerOnlyContent } from '../../utils/textUtils';
+import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, ChevronUp, CornerDownRight, Send, FileText, GraduationCap, Check, Lock } from 'lucide-react';
+import { GifPicker } from '../../components/GifPicker';
+import { StickerPicker } from '../../components/StickerPicker';
 
 export const FeedPage: React.FC = () => {
   const { user } = useAuth();
@@ -22,17 +24,19 @@ export const FeedPage: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newContent, setNewContent] = useState('');
-  const [newPostType, setNewPostType] = useState<'HELP' | 'WIN' | 'IDEA' | 'COLLAB' | 'POLL'>('COLLAB');
+  const [newPostType, setNewPostType] = useState<'HELP' | 'WIN' | 'IDEA' | 'COLLAB' | 'POLL' | 'CASUAL'>('CASUAL');
   const [newImageUrl, setNewImageUrl] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [showPoll, setShowPoll] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const [replyPrivacy, setReplyPrivacy] = useState<'everyone' | 'followers' | 'mentioned'>('everyone');
+  const [replyPrivacy, setReplyPrivacy] = useState<string[]>(['everyone']);
   const [audience, setAudience] = useState<'public' | 'followers' | 'community'>('public');
   const [communityId, setCommunityId] = useState<number | null>(null);
   const [mySchools, setMySchools] = useState<any[]>([]);
   const [showPrivacyDropdown, setShowPrivacyDropdown] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [showLocationInput, setShowLocationInput] = useState(false);
   const [newLocation, setNewLocation] = useState('');
 
@@ -43,6 +47,8 @@ export const FeedPage: React.FC = () => {
   const [replyParentId, setReplyParentId] = useState<number | null>(null);
   const [replyingToUser, setReplyingToUser] = useState<string | null>(null);
   const [expandedReplies, setExpandedReplies] = useState<Record<number, boolean>>({});
+  const [showCommentStickerPicker, setShowCommentStickerPicker] = useState(false);
+  const commentFormRef = React.useRef<HTMLFormElement>(null);
 
   // Report Modal State
   const [reportingPostId, setReportingPostId] = useState<number | null>(null);
@@ -88,6 +94,8 @@ export const FeedPage: React.FC = () => {
   const openCreate = () => {
     setAudience('public');
     setCommunityId(null);
+    setReplyPrivacy(['everyone']);
+    setShowPrivacyDropdown(false);
     setShowCreateModal(true);
   };
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,7 +124,7 @@ export const FeedPage: React.FC = () => {
         content: newContent.trim(),
         post_type: newPostType,
         image_url: newImageUrl.trim() || undefined,
-        reply_privacy: replyPrivacy,
+        reply_privacy: replyPrivacy.length > 0 ? replyPrivacy.join(',') : 'everyone',
         audience: audience,
         community_id: audience === 'community' ? communityId : undefined,
         location: newLocation.trim() || undefined,
@@ -132,7 +140,8 @@ export const FeedPage: React.FC = () => {
       setNewContent('');
       setNewImageUrl('');
       setPollOptions(['', '']);
-      setReplyPrivacy('everyone');
+      setReplyPrivacy(['everyone']);
+      setShowPrivacyDropdown(false);
       setAudience('public');
       setCommunityId(null);
       setShowEmojiPicker(false);
@@ -249,9 +258,60 @@ export const FeedPage: React.FC = () => {
     setReplyingToUser(null);
   };
 
+  const canReplyInfo = React.useMemo(() => {
+    if (!activeCommentPost || !user) return { allowed: true };
+    if (activeCommentPost.author_id === user.id) return { allowed: true };
+
+    const raw = (activeCommentPost.reply_privacy || 'everyone').toLowerCase();
+    const parts = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+
+    if (parts.has('everyone') || parts.size === 0) return { allowed: true };
+
+    // 1. Check school
+    if (parts.has('school') || parts.has('my_school')) {
+      const curSchool = (user.profile?.school || '').trim().toLowerCase();
+      const authorSchool = (activeCommentPost.author_school || '').trim().toLowerCase();
+      if (curSchool && authorSchool && curSchool === authorSchool) {
+        return { allowed: true };
+      }
+    }
+
+    // 2. Check mentioned
+    if (parts.has('mentioned')) {
+      const tag = `@${user.username.toLowerCase()}`;
+      if (
+        (activeCommentPost.content || '').toLowerCase().includes(tag) ||
+        (activeCommentPost.title || '').toLowerCase().includes(tag)
+      ) {
+        return { allowed: true };
+      }
+    }
+
+    const labels: string[] = [];
+    if (parts.has('school') || parts.has('my_school')) {
+      labels.push(`members from ${activeCommentPost.author_school || 'their school'}`);
+    }
+    if (parts.has('followers')) {
+      labels.push('followers');
+    }
+    if (parts.has('mentioned')) {
+      labels.push('mentioned accounts');
+    }
+
+    return {
+      allowed: false,
+      reason: `Only ${labels.join(' or ')} can reply to this post.`,
+    };
+  }, [activeCommentPost, user]);
+
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeCommentPost || !commentInput.trim()) return;
+
+    if (!canReplyInfo.allowed) {
+      alert(canReplyInfo.reason || 'You do not have permission to reply to this post.');
+      return;
+    }
 
     try {
       await api.post(`/posts/${activeCommentPost.id}/comments`, {
@@ -301,6 +361,7 @@ export const FeedPage: React.FC = () => {
 
   const postCategories = [
     { type: 'ALL', label: 'All Posts', icon: Globe },
+    { type: 'CASUAL', label: 'Casual', icon: Sparkles },
     { type: 'COLLAB', label: 'Collaborations', icon: Handshake },
     { type: 'IDEA', label: 'Project Ideas', icon: Lightbulb },
     { type: 'HELP', label: 'Questions & Help', icon: Info },
@@ -310,6 +371,8 @@ export const FeedPage: React.FC = () => {
 
   const getPostTypeBadge = (type: string) => {
     switch (type) {
+      case 'CASUAL':
+        return { label: 'Casual', icon: Sparkles, className: 'bg-teal-500/10 text-teal-500 border-teal-500/20' };
       case 'COLLAB':
         return { label: 'Collaboration', icon: Handshake, className: 'bg-blue-500/10 text-blue-500 border-blue-500/20' };
       case 'IDEA':
@@ -477,7 +540,7 @@ export const FeedPage: React.FC = () => {
                     <p className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{renderContentWithHighlights(post.content)}</p>
                   </div>
 
-                  {/* Media (Image or Video) if present */}
+                  {/* Media (Image, Video, or Document) if present */}
                   {post.images && post.images.length > 0 && (
                     isVideoUrl(post.images[0]) ? (
                       <div className="rounded-2xl overflow-hidden border border-border/80 bg-black/60 flex items-center justify-center shadow-sm">
@@ -488,6 +551,28 @@ export const FeedPage: React.FC = () => {
                           preload="metadata"
                           className="w-full max-h-[600px] object-contain rounded-2xl bg-black"
                         />
+                      </div>
+                    ) : post.images[0].toLowerCase().match(/\.(pdf|doc|docx|txt|csv)$/) ? (
+                      <div className="mt-2 border border-border bg-secondary/50 rounded-xl overflow-hidden shadow-sm">
+                        {post.images[0].toLowerCase().endsWith('.pdf') ? (
+                          <iframe src={post.images[0]} className="w-full h-[400px] border-none bg-white" title="PDF Document" />
+                        ) : (
+                          <div className="p-8 flex flex-col items-center justify-center bg-secondary/30 text-muted-foreground gap-3">
+                            <FileText className="w-12 h-12 opacity-50" />
+                            <span className="text-sm font-medium">Document attached</span>
+                          </div>
+                        )}
+                        <div className="p-3 border-t border-border flex items-center justify-between gap-3 text-xs bg-card">
+                          <div className="flex flex-col min-w-0">
+                            <span className="truncate font-bold text-[11px] uppercase tracking-wider">
+                              {post.images[0].split('/').pop() || 'Document'}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground mt-0.5">Click Open to view</span>
+                          </div>
+                          <a href={post.images[0]} target="_blank" rel="noopener noreferrer" className="px-4 py-2 rounded-lg font-bold shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+                            Open
+                          </a>
+                        </div>
                       </div>
                     ) : (
                       <div 
@@ -585,8 +670,9 @@ export const FeedPage: React.FC = () => {
                     <label className="text-[11px] font-bold text-foreground">Choose Category</label>
                     <span className="text-[10px] font-semibold text-primary">Required</span>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                     {[
+                      { type: 'CASUAL', label: 'Casual', desc: 'General thoughts', icon: Sparkles },
                       { type: 'COLLAB', label: 'Collaboration', desc: 'Find teammates', icon: Handshake },
                       { type: 'IDEA', label: 'Project Idea', desc: 'Share a concept', icon: Lightbulb },
                       { type: 'HELP', label: 'Ask for Help', desc: 'Get assistance', icon: Info },
@@ -729,33 +815,121 @@ export const FeedPage: React.FC = () => {
                 </div>
 
                 <div className="flex flex-col gap-3 pt-2 border-t border-border">
-                  {/* Privacy Selector */}
+                  {/* Privacy Selector (Multi-Select) */}
                   <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowPrivacyDropdown(!showPrivacyDropdown)}
-                      className="flex items-center gap-1.5 text-xs text-primary font-bold hover:bg-primary/10 px-3 py-1.5 rounded-full transition-colors w-fit"
-                    >
-                      {replyPrivacy === 'everyone' && <><Globe className="w-3.5 h-3.5" /> Everyone can reply</>}
-                      {replyPrivacy === 'followers' && <><Users className="w-3.5 h-3.5" /> Followers only</>}
-                      {replyPrivacy === 'mentioned' && <><AtSign className="w-3.5 h-3.5" /> Mentioned only</>}
-                    </button>
+                    {(() => {
+                      const getSummary = () => {
+                        if (replyPrivacy.includes('everyone') || replyPrivacy.length === 0) {
+                          return { icon: Globe, text: 'Everyone can reply' };
+                        }
+                        const hasSchool = replyPrivacy.includes('school');
+                        const hasFollowers = replyPrivacy.includes('followers');
+                        const hasMentioned = replyPrivacy.includes('mentioned');
+                        const count = [hasSchool, hasFollowers, hasMentioned].filter(Boolean).length;
+
+                        if (count === 3) return { icon: GraduationCap, text: 'School, Followers & Mentioned can reply' };
+                        if (hasSchool && hasFollowers) return { icon: GraduationCap, text: 'School & Followers can reply' };
+                        if (hasSchool && hasMentioned) return { icon: GraduationCap, text: 'School & Mentioned can reply' };
+                        if (hasFollowers && hasMentioned) return { icon: Users, text: 'Followers & Mentioned can reply' };
+                        if (hasSchool) return { icon: GraduationCap, text: 'My school only can reply' };
+                        if (hasFollowers) return { icon: Users, text: 'Followers only can reply' };
+                        if (hasMentioned) return { icon: AtSign, text: 'Mentioned only can reply' };
+                        return { icon: Globe, text: 'Everyone can reply' };
+                      };
+
+                      const summary = getSummary();
+                      const SummaryIcon = summary.icon;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setShowPrivacyDropdown(!showPrivacyDropdown)}
+                          className="flex items-center gap-1.5 text-xs text-primary font-bold hover:bg-primary/10 px-3 py-1.5 rounded-full transition-colors w-fit border border-primary/20"
+                        >
+                          <SummaryIcon className="w-3.5 h-3.5" />
+                          <span>{summary.text}</span>
+                          <ChevronDown className={`w-3 h-3 transition-transform ${showPrivacyDropdown ? 'rotate-180' : ''}`} />
+                        </button>
+                      );
+                    })()}
+
                     {showPrivacyDropdown && (
-                      <div className="absolute top-full left-0 mt-2 w-48 bg-card border border-border rounded-xl shadow-xl z-10 py-1 flex flex-col overflow-hidden">
+                      <div className="absolute top-full left-0 mt-2 w-64 bg-card border border-border rounded-2xl shadow-2xl z-30 p-2 flex flex-col space-y-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                        <div className="text-[10px] font-extrabold text-muted-foreground px-2 py-1 uppercase tracking-wider">
+                          Who can reply? (Select multiple)
+                        </div>
                         {[
-                          { val: 'everyone', label: 'Everyone', icon: Globe },
-                          { val: 'followers', label: 'Followers', icon: Users },
-                          { val: 'mentioned', label: 'Mentioned', icon: AtSign },
-                        ].map(opt => (
+                          { val: 'everyone', label: 'Everyone', icon: Globe, description: 'Anyone on EduNexus can reply' },
+                          { val: 'school', label: 'My school only', icon: GraduationCap, description: 'Students & staff from your school' },
+                          { val: 'followers', label: 'Followers', icon: Users, description: 'People who follow your profile' },
+                          { val: 'mentioned', label: 'Mentioned', icon: AtSign, description: 'Only accounts tagged with @' },
+                        ].map((opt) => {
+                          const isSelected = replyPrivacy.includes(opt.val);
+                          const Icon = opt.icon;
+
+                          const handleToggle = () => {
+                            if (opt.val === 'everyone') {
+                              setReplyPrivacy(['everyone']);
+                              return;
+                            }
+                            if (replyPrivacy.includes('everyone')) {
+                              setReplyPrivacy([opt.val]);
+                              return;
+                            }
+                            if (replyPrivacy.includes(opt.val)) {
+                              const remaining = replyPrivacy.filter((item) => item !== opt.val);
+                              setReplyPrivacy(remaining.length > 0 ? remaining : ['everyone']);
+                            } else {
+                              setReplyPrivacy([...replyPrivacy, opt.val]);
+                            }
+                          };
+
+                          return (
+                            <button
+                              key={opt.val}
+                              type="button"
+                              onClick={handleToggle}
+                              className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all ${
+                                isSelected ? 'bg-primary/10 text-primary font-bold' : 'hover:bg-secondary text-foreground'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div
+                                  className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isSelected ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+                                  }`}
+                                >
+                                  <Icon className="w-4 h-4" />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold leading-tight truncate">{opt.label}</div>
+                                  <div className="text-[10px] text-muted-foreground leading-tight truncate">{opt.description}</div>
+                                </div>
+                              </div>
+
+                              {/* Multi-select checkmark indicator */}
+                              <div
+                                className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ml-2 transition-colors ${
+                                  isSelected ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/30 bg-card'
+                                }`}
+                              >
+                                {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+
+                        <div className="pt-1.5 mt-1 border-t border-border flex items-center justify-between px-1">
+                          <span className="text-[10px] text-muted-foreground font-semibold">
+                            {replyPrivacy.includes('everyone') ? 'Open to everyone' : `${replyPrivacy.length} option${replyPrivacy.length > 1 ? 's' : ''} active`}
+                          </span>
                           <button
-                            key={opt.val}
                             type="button"
-                            onClick={() => { setReplyPrivacy(opt.val as any); setShowPrivacyDropdown(false); }}
-                            className={`flex items-center gap-2 px-3 py-2 text-xs font-bold hover:bg-secondary transition-colors ${replyPrivacy === opt.val ? 'text-primary' : 'text-foreground'}`}
+                            onClick={() => setShowPrivacyDropdown(false)}
+                            className="text-[11px] font-bold text-primary hover:underline px-2 py-0.5"
                           >
-                            <opt.icon className="w-4 h-4" /> {opt.label}
+                            Done
                           </button>
-                        ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -831,10 +1005,47 @@ export const FeedPage: React.FC = () => {
                           </div>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowGifPicker(true)}
+                        title="Add Animated GIF"
+                        className={`p-2 rounded-full transition-colors flex items-center justify-center font-black text-[11px] leading-none ${showGifPicker ? 'text-primary bg-primary/10' : 'text-primary hover:text-primary/80 hover:bg-primary/10'}`}
+                      >
+                        <span className="border border-current px-1 py-0.5 rounded text-[10px] tracking-tight">GIF</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowStickerPicker(true)}
+                        title="Add a Sticker (Members)"
+                        className={`relative p-2 rounded-full transition-all flex items-center justify-center ${showStickerPicker ? 'text-primary bg-primary/10 ring-1 ring-primary/40' : 'text-primary hover:text-primary/80 hover:bg-primary/10'}`}
+                      >
+                        <Sparkles className="w-5 h-5" />
+                      </button>
                       <button type="button" onClick={() => setShowLocationInput(!showLocationInput)} title="Add Location" className={`p-2 rounded-full transition-colors hidden sm:block ${showLocationInput ? 'text-primary bg-primary/10' : 'text-primary hover:text-primary/80 hover:bg-primary/10'}`}>
                         <MapPin className="w-5 h-5" />
                       </button>
                     </div>
+
+                    {showGifPicker && (
+                      <GifPicker
+                        onSelect={(gifUrl) => {
+                          setNewImageUrl(gifUrl);
+                          setShowGifPicker(false);
+                        }}
+                        onClose={() => setShowGifPicker(false)}
+                        title="Attach GIF to Post"
+                      />
+                    )}
+                    {showStickerPicker && (
+                      <StickerPicker
+                        onSelect={(sticker) => {
+                          setNewImageUrl(sticker.url);
+                          setShowStickerPicker(false);
+                        }}
+                        onClose={() => setShowStickerPicker(false)}
+                        title="Attach a Sticker"
+                      />
+                    )}
                   
                   <div className="flex items-center gap-3">
                     {isUploadingImage && <span className="text-[10px] text-muted-foreground font-bold animate-pulse">UPLOADING...</span>}
@@ -916,9 +1127,17 @@ export const FeedPage: React.FC = () => {
                             </div>
 
                             {/* Content */}
-                            <p className="text-xs text-foreground/90 mt-1 whitespace-pre-wrap leading-relaxed">
-                              {renderContentWithHighlights(c.content)}
-                            </p>
+                            {isStickerOnlyContent(c.content) ? (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {c.content.trim().split(/\s+/).map((url, i) => (
+                                  <img key={i} src={url} alt="sticker" className="w-20 h-20 sm:w-24 sm:h-24" draggable={false} />
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-foreground/90 mt-1 whitespace-pre-wrap leading-relaxed">
+                                {renderContentWithHighlights(c.content)}
+                              </p>
+                            )}
 
                             {/* Interaction Row (Like / Reply) */}
                             <div className="flex items-center gap-4 mt-2 text-xs">
@@ -985,9 +1204,17 @@ export const FeedPage: React.FC = () => {
                                               <span className="text-[10px] text-muted-foreground">@{reply.author_username}</span>
                                               <span className="text-[9px] text-muted-foreground">• {timeAgo(reply.created_at)}</span>
                                             </div>
-                                            <p className="text-xs text-foreground/90 mt-0.5 whitespace-pre-wrap leading-relaxed">
-                                              {renderContentWithHighlights(reply.content)}
-                                            </p>
+                                            {isStickerOnlyContent(reply.content) ? (
+                                              <div className="mt-0.5 flex flex-wrap gap-1">
+                                                {reply.content.trim().split(/\s+/).map((url, i) => (
+                                                  <img key={i} src={url} alt="sticker" className="w-16 h-16" draggable={false} />
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <p className="text-xs text-foreground/90 mt-0.5 whitespace-pre-wrap leading-relaxed">
+                                                {renderContentWithHighlights(reply.content)}
+                                              </p>
+                                            )}
 
                                             <div className="flex items-center gap-3 mt-1.5 text-xs">
                                               <button
@@ -1045,32 +1272,58 @@ export const FeedPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Comment Input Form */}
-                <form onSubmit={handleAddComment} className="flex items-center gap-3">
-                  <UserAvatar
-                    src={user?.profile?.avatar_url}
-                    username={user?.username}
-                    size={34}
-                  />
-                  <div className="flex-1 relative flex items-center">
-                    <input
-                      type="text"
-                      required
-                      placeholder={replyingToUser ? `Write a reply to @${replyingToUser}...` : "Add a comment..."}
-                      value={commentInput}
-                      onChange={(e) => setCommentInput(e.target.value)}
-                      className="w-full bg-secondary border border-border rounded-full pl-4 pr-12 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors"
+                {/* Comment Input Form or Locked Banner */}
+                {canReplyInfo.allowed ? (
+                  <form ref={commentFormRef} onSubmit={handleAddComment} className="flex items-center gap-3">
+                    <UserAvatar
+                      src={user?.profile?.avatar_url}
+                      username={user?.username}
+                      size={34}
                     />
-                    <button
-                      type="submit"
-                      disabled={!commentInput.trim()}
-                      className="absolute right-1.5 p-1.5 rounded-full bg-primary text-primary-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:opacity-90 transition-all"
-                      title="Post comment"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex-1 relative flex items-center">
+                      <input
+                        type="text"
+                        required
+                        placeholder={replyingToUser ? `Write a reply to @${replyingToUser}...` : "Add a comment..."}
+                        value={commentInput}
+                        onChange={(e) => setCommentInput(e.target.value)}
+                        className="w-full bg-secondary border border-border rounded-full pl-4 pr-20 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCommentStickerPicker(true)}
+                        title="Reply with a sticker (Members)"
+                        className="absolute right-9 p-1.5 rounded-full text-primary hover:bg-primary/10 transition-all"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={!commentInput.trim()}
+                        className="absolute right-1.5 p-1.5 rounded-full bg-primary text-primary-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:opacity-90 transition-all"
+                        title="Post comment"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {showCommentStickerPicker && (
+                      <StickerPicker
+                        onSelect={(sticker) => {
+                          setShowCommentStickerPicker(false);
+                          setCommentInput(sticker.url);
+                          setTimeout(() => commentFormRef.current?.requestSubmit(), 0);
+                        }}
+                        onClose={() => setShowCommentStickerPicker(false)}
+                        title="Reply with a sticker"
+                      />
+                    )}
+                  </form>
+                ) : (
+                  <div className="flex items-center gap-2.5 px-4 py-3 bg-secondary/80 border border-border rounded-2xl text-xs text-muted-foreground">
+                    <Lock className="w-4 h-4 text-primary shrink-0" />
+                    <span>{canReplyInfo.reason}</span>
                   </div>
-                </form>
+                )}
               </div>
             </div>
           </div>

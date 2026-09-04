@@ -12,7 +12,10 @@ from backend.app import membership_config as mconfig
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+# Resolve the same uploads directory the static file server uses (see main.py).
+# This keeps write-path and read-path identical regardless of the process CWD.
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+UPLOAD_DIR = os.path.join(_ROOT_DIR, "backend", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Allowed media types for a social platform (images, audio voice notes, video, generic)

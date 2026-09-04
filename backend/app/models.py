@@ -119,10 +119,12 @@ class Post(Base):
     author_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     title = Column(String(200), nullable=True)
     content = Column(Text, nullable=False)
-    post_type = Column(String(20), default='COLLAB', nullable=False) # 'HELP', 'WIN', 'IDEA', 'COLLAB', 'POLL'
-    reply_privacy = Column(String(20), default='everyone', nullable=False) # 'everyone', 'followers', 'mentioned'
+    post_type = Column(String(20), default='CASUAL', nullable=False) # 'HELP', 'WIN', 'IDEA', 'COLLAB', 'POLL', 'CASUAL'
+    reply_privacy = Column(String(100), default='everyone', nullable=False) # comma-separated: 'everyone', 'school', 'followers', 'mentioned'
     tags = Column(String, nullable=True) # e.g. "hackathon,urgent"
     location = Column(String, nullable=True) # e.g. "Library"
+    audience = Column(String(20), default='public', nullable=False) # 'public', 'followers', 'community'
+    audience_community_id = Column(Integer, nullable=True) # School.id when audience='community'
     is_deleted = Column(Boolean, default=False)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
 

@@ -5,7 +5,7 @@ import { api } from '../services/api';
 import type { NotificationItem, Conversation } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { MembershipBadge } from './MembershipBadge';
-import { Home, Compass, MessagesSquare, MessageSquare, Award, Bell, User as UserIcon, Shield, LogOut, Search, Sun, Moon, Crown } from 'lucide-react';
+import { Home, Compass, MessageSquare, Award, Bell, User as UserIcon, Shield, LogOut, Search, Sun, Moon, Crown, Building2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
 export const AppNavbar: React.FC = () => {
@@ -48,7 +48,7 @@ export const AppNavbar: React.FC = () => {
   const navItems = [
     { label: 'Home', path: '/app/feed', icon: Home },
     { label: 'Discover', path: '/app/discover', icon: Compass },
-    { label: 'Forums', path: '/app/forums', icon: MessagesSquare },
+    { label: 'School', path: '/app/school', icon: Building2 },
     { label: 'Opportunities', path: '/app/opportunities', icon: Award },
     { label: 'Profile', path: `/app/profile/${user?.username || ''}`, icon: UserIcon },
   ];

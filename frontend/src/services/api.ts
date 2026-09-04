@@ -1,6 +1,10 @@
 const env = import.meta.env as any;
 const API_BASE = env.VITE_API_BASE || '/api';
 
+export function getApiBase(): string {
+  return API_BASE;
+}
+
 export function getAuthToken(): string | null {
   return localStorage.getItem('edunexus_token');
 }
@@ -35,18 +39,28 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   });
 
   if (!response.ok) {
-    let errorMsg = 'An unexpected error occurred';
+    const status = response.status;
+    const statusText = response.statusText || '';
+    let errorMsg = `Request failed (${status}${statusText ? ' ' + statusText : ''})`;
     try {
-      const errorData = await response.json();
-      let parsedDetail = errorData.detail;
-      if (Array.isArray(parsedDetail)) {
-        parsedDetail = parsedDetail.map((err: any) => `${err.loc?.[err.loc.length - 1] || 'Field'}: ${err.msg}`).join(', ');
-      } else if (typeof parsedDetail === 'object' && parsedDetail !== null) {
-        parsedDetail = JSON.stringify(parsedDetail);
+      const text = await response.text();
+      if (text) {
+        try {
+          const errorData = JSON.parse(text);
+          let parsedDetail = errorData.detail;
+          if (Array.isArray(parsedDetail)) {
+            parsedDetail = parsedDetail.map((err: any) => `${err.loc?.[err.loc.length - 1] || 'Field'}: ${err.msg}`).join(', ');
+          } else if (typeof parsedDetail === 'object' && parsedDetail !== null) {
+            parsedDetail = JSON.stringify(parsedDetail);
+          }
+          errorMsg = parsedDetail || errorData.message || errorData.error || text || errorMsg;
+        } catch {
+          // Body is not JSON; use the raw text
+          errorMsg = text.slice(0, 500) || errorMsg;
+        }
       }
-      errorMsg = parsedDetail || errorData.message || errorMsg;
-    } catch (e) {
-      // Ignore JSON parse errors
+    } catch {
+      // If even reading the body fails, keep the default
     }
     throw new Error(errorMsg);
   }

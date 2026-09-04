@@ -14,7 +14,7 @@ from backend.app.database import engine, Base, SessionLocal, get_db
 from backend.app.models import User, Profile, School, SchoolMember
 from backend.app.auth.security import get_password_hash
 from fastapi.staticfiles import StaticFiles
-from backend.app.api import auth, users, posts, discover, forums, opportunities, messages, notifications, admin, upload, schools, membership
+from backend.app.api import auth, users, posts, discover, forums, opportunities, messages, notifications, admin, upload, schools, membership, gifs, stickers
 
 # Create tables automatically
 Base.metadata.create_all(bind=engine)
@@ -68,7 +68,18 @@ async def security_and_rate_limit_middleware(request: Request, call_next):
         ip_auth_attempts[client_ip].append(now)
 
     # 2. Process Request
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        # Surface the real error message to the client so the UI never shows
+        # a generic "unexpected error" alert with no information.
+        import traceback
+        traceback.print_exc()
+        return Response(
+            content=f'{{"detail": "Server error: {type(exc).__name__}: {str(exc).replace(chr(34), chr(39))}"}}',
+            status_code=500,
+            media_type="application/json",
+        )
 
     # 3. HTTP Security Headers
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -91,6 +102,8 @@ app.include_router(admin.router, prefix="/api")
 app.include_router(upload.router, prefix="/api")
 app.include_router(schools.router, prefix="/api/schools")
 app.include_router(membership.router, prefix="/api/membership")
+app.include_router(gifs.router, prefix="/api")
+app.include_router(stickers.router, prefix="/api")
 
 # Uploads directory with HTTP Range / Video Seeking support (HTTP 206 Partial Content)
 UPLOAD_DIR = os.path.join(root_dir, "backend", "uploads")

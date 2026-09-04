@@ -28,7 +28,23 @@ import {
   FileText,
   CreditCard,
   Gift,
+  Sticker as StickerIcon,
+  Lock,
+  Loader2,
 } from 'lucide-react';
+
+interface StickerPack {
+  key: string;
+  name: string;
+  description: string;
+  icon: string;
+  tint: string;
+  accent?: string;
+  gradient?: string[];
+  min_tier: string;
+  unlocked: boolean;
+  stickers: { key: string; label: string; art?: string; emoji?: string }[];
+}
 
 const OutreachStat: React.FC<{ label: string; data: any }> = ({ label, data }) => {
   const limit = data?.limit;
@@ -58,6 +74,9 @@ export const MembershipPage: React.FC = () => {
   const [limits, setLimits] = useState<any>(null);
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [stickerPacks, setStickerPacks] = useState<StickerPack[]>([]);
+  const [stickerTier, setStickerTier] = useState<string | null>(null);
+  const [stickerLoading, setStickerLoading] = useState(true);
   const [loading, setLoading] = useState(true);
 
   // Modals state
@@ -69,21 +88,27 @@ export const MembershipPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [t, m, l, cfg, txs] = await Promise.all([
+      const [t, m, l, cfg, txs, stickers] = await Promise.all([
         api.get<MembershipTier[]>('/membership/tiers'),
         api.get<MyMembership | null>('/membership/me').catch(() => null),
         api.get<any>('/membership/limits').catch(() => null),
         api.get<PaymentConfig>('/membership/config').catch(() => null),
         api.get<PaymentTransaction[]>('/membership/transactions').catch(() => []),
+        api.get<{ user_tier: string | null; packs: StickerPack[] }>('/stickers/packs').catch(() => null),
       ]);
       setTiers(t || []);
       setMine(m);
       setLimits(l);
       setPaymentConfig(cfg);
       setTransactions(txs || []);
+      if (stickers) {
+        setStickerPacks(stickers.packs || []);
+        setStickerTier(stickers.user_tier || null);
+      }
     } catch (e) {
       console.error('Failed to load membership data', e);
     } finally {
+      setStickerLoading(false);
       setLoading(false);
     }
   };
@@ -438,6 +463,142 @@ export const MembershipPage: React.FC = () => {
                   Upload high-res files, photos, and project videos up to 150 MB, add up to 10 poll options, and enjoy extended monthly chat quotas.
                 </p>
               </div>
+
+              <div className="bg-card border border-border rounded-2xl p-5 space-y-2">
+                <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <StickerIcon className="w-4 h-4" />
+                </div>
+                <h4 className="text-sm font-bold text-foreground">Sticker Packs</h4>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Send expressive stickers in posts, comments and direct messages. Each tier unlocks additional packs — Bronze gets Study Boost, Silver adds Reactions, Gold adds Campus Life, and Platinum unlocks the exclusive VIP pack.
+                </p>
+              </div>
+            </div>
+
+            {/* Sticker Packs Showcase */}
+            <div className="bg-card border border-border rounded-3xl p-6 space-y-4 shadow-sm">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    <StickerIcon className="w-4 h-4 text-primary" />
+                    <span>Sticker Packs — Member Exclusive</span>
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Original EduNexus-illustrated stickers for posts, comments and chats. Free accounts see a locked preview; members unlock packs based on their tier.
+                  </p>
+                </div>
+                {stickerTier ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-extrabold uppercase tracking-wider border border-primary/20">
+                    <Sparkles className="w-3 h-3" />
+                    Your tier: {stickerTier}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary text-muted-foreground text-[10px] font-extrabold uppercase tracking-wider border border-border">
+                    <Lock className="w-3 h-3" />
+                    Free plan — no sticker access
+                  </span>
+                )}
+              </div>
+
+              {stickerLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-6 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  Loading sticker packs...
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {stickerPacks.map((pack) => {
+                    const isUnlocked = pack.unlocked;
+                    const grad = pack.gradient || [pack.tint, pack.accent || pack.tint];
+                    return (
+                      <div
+                        key={pack.key}
+                        className={`relative rounded-2xl border p-4 flex flex-col gap-3 transition-all overflow-hidden ${
+                          isUnlocked
+                            ? 'border-transparent shadow-md hover:-translate-y-0.5 hover:shadow-xl'
+                            : 'border-border bg-secondary/20'
+                        }`}
+                        style={isUnlocked ? {
+                          background: `linear-gradient(135deg, ${grad[0]}10 0%, ${grad[1] || grad[0]}06 100%)`,
+                          boxShadow: `0 8px 24px -12px ${pack.tint}55`,
+                        } : undefined}
+                      >
+                        {isUnlocked && (
+                          <div
+                            className="absolute -top-12 -right-12 w-32 h-32 rounded-full opacity-25 blur-2xl pointer-events-none"
+                            style={{ background: pack.tint }}
+                          />
+                        )}
+                        <div className="relative flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 ring-1 ring-white/20"
+                              style={{
+                                background: `linear-gradient(135deg, ${grad[0]}, ${grad[1] || grad[0]})`,
+                              }}
+                            >
+                              <span className="drop-shadow-sm">{pack.icon}</span>
+                            </div>
+                            <div>
+                              <h5 className="text-xs font-black text-foreground leading-tight">{pack.name}</h5>
+                              <p className="text-[10px] text-muted-foreground capitalize">
+                                {pack.stickers.length} stickers • {pack.min_tier}+ tier
+                              </p>
+                            </div>
+                          </div>
+                          {isUnlocked ? (
+                            <span className="text-[9px] font-extrabold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Unlocked
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-extrabold uppercase tracking-wider bg-secondary text-muted-foreground border border-border px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" />
+                              Locked
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="relative text-[11px] text-muted-foreground leading-snug">{pack.description}</p>
+
+                        <div className="relative grid grid-cols-3 gap-1.5">
+                          {pack.stickers.slice(0, 6).map((s) => (
+                            <div
+                              key={s.key}
+                              className={`aspect-square rounded-lg flex items-center justify-center overflow-hidden ring-1 ring-border/40 ${
+                                isUnlocked ? 'bg-card/60' : 'bg-secondary/40'
+                              }`}
+                              style={isUnlocked ? { background: `linear-gradient(135deg, ${grad[0]}14, ${grad[1] || grad[0]}05)` } : undefined}
+                              title={s.label}
+                            >
+                              <img
+                                src={`/api/stickers/packs/${pack.key}/${s.key}.svg`}
+                                alt={s.label}
+                                className={`w-4/5 h-4/5 drop-shadow-sm transition-transform ${
+                                  isUnlocked ? '' : 'grayscale opacity-50 blur-[0.5px]'
+                                }`}
+                                draggable={false}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {!stickerTier && (
+                <div className="text-[11px] text-muted-foreground bg-secondary/40 border border-border rounded-xl p-3 flex flex-wrap items-center gap-2 justify-between">
+                  <span>Free accounts see a locked preview. Upgrade to a member tier to send stickers in posts, comments, and chats.</span>
+                  <button
+                    onClick={() => setClaimModalTier(paidTiers[0])}
+                    className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground font-black text-[11px] hover:scale-[1.02] active:scale-100 transition-all"
+                  >
+                    Claim Free Pass
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Billing & Receipts History Ledger */}

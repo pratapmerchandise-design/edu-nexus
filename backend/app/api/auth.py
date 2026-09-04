@@ -98,6 +98,21 @@ def register_user(data: UserRegister, db: Session = Depends(get_db)):
                     db.flush()
                 new_user.skills.append(skill_obj)
 
+    # Process School Membership
+    if selected_school_name:
+        school_obj = db.query(School).filter(School.name.ilike(selected_school_name)).first()
+        if not school_obj:
+            school_obj = School(name=selected_school_name)
+            db.add(school_obj)
+            db.flush()
+        
+        school_member = SchoolMember(
+            school_id=school_obj.id,
+            user_id=new_user.id,
+            role='student'
+        )
+        db.add(school_member)
+
     db.commit()
 
     # Send email verification code (email must be verified before using the app)

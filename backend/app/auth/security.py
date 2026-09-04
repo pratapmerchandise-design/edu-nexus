@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from passlib.context import CryptContext
+import bcrypt
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -14,28 +14,34 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "edunexus_v1_super_secret_jwt_key_2026_
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# Use bcrypt directly. The passlib bcrypt backend is unmaintained and emits
+# noisy deprecation warnings against bcrypt 4.x ("module 'bcrypt' has no
+# attribute '__about__'"). Bcrypt 4.x itself is fine; the underlying library
+# correctly handles the 72-byte input limit when we truncate explicitly.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _truncate(password: str) -> bytes:
+    # bcrypt only looks at the first 72 bytes; truncate first to avoid a
+    # silent ValueError on bcrypt 4.x for longer inputs.
+    return (password or "")[:_BCRYPT_MAX_BYTES].encode("utf-8")
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    truncated = (plain_password or "")[:72]
+    if not hashed_password:
+        return False
     try:
-        return pwd_context.verify(truncated, hashed_password)
-    except Exception:
-        import bcrypt
-        try:
-            return bcrypt.checkpw(truncated.encode('utf-8'), hashed_password.encode('utf-8'))
-        except Exception:
-            return False
+        return bcrypt.checkpw(_truncate(plain_password), hashed_password.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
 
 def get_password_hash(password: str) -> str:
-    truncated = (password or "")[:72]
-    try:
-        return pwd_context.hash(truncated)
-    except Exception:
-        import bcrypt
-        salt = bcrypt.gensalt()
-        return bcrypt.hashpw(truncated.encode('utf-8'), salt).decode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(_truncate(password), salt).decode("utf-8")
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
