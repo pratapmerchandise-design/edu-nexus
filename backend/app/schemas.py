@@ -419,11 +419,27 @@ class SchoolBase(BaseModel):
     description: Optional[str] = None
     logo_url: Optional[str] = None
 
+
 class SchoolCreate(SchoolBase):
-    pass
+    district: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    external_id: Optional[str] = None
+    verified: Optional[bool] = False
+
 
 class SchoolOut(SchoolBase):
     id: int
+    district: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    external_id: Optional[str] = None
+    verified: bool = False
+    members_count: Optional[int] = 0
     created_at: datetime
 
     class Config:

@@ -446,6 +446,13 @@ class School(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     logo_url = Column(String(255), nullable=True)
+    district = Column(String(120), nullable=True, index=True)
+    address = Column(String(500), nullable=True)
+    city = Column(String(120), nullable=True, index=True)
+    state = Column(String(120), nullable=True, index=True)
+    country = Column(String(120), nullable=True, default='India', index=True)
+    external_id = Column(String(80), nullable=True, index=True)  # e.g. DoE/UDISE id from official source
+    verified = Column(Boolean, default=False, nullable=False, index=True)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
 
     members = relationship('SchoolMember', back_populates='school', cascade='all, delete-orphan')

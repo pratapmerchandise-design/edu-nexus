@@ -21,6 +21,12 @@ echo "[1b/4] Running database migrations..."
 cd "$REPO_DIR"
 source venv/bin/activate 2>/dev/null || true
 python3 backend/migrate_post_audience_any.py || true
+python3 backend/migrate_school_columns.py || true
+
+echo "[1c/4] Seeding verified school directory (Delhi DoE, etc.)..."
+if [ -f "backend/seeds/delhi_schools.json" ]; then
+    python3 -m backend.scripts.seed_schools backend/seeds/delhi_schools.json || true
+fi
 
 echo "[2/4] Updating Nginx domain configuration..."
 sudo bash -c "cat <<EOF > /etc/nginx/sites-available/edunexus

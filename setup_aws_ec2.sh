@@ -102,6 +102,13 @@ Base.metadata.create_all(bind=engine)
 print('[DB] SQLite schema initialized.')
 "
 
+# Apply any pending additive migrations and seed the verified campus directory.
+python3 backend/migrate_post_audience_any.py || true
+python3 backend/migrate_school_columns.py || true
+if [ -f "backend/seeds/delhi_schools.json" ]; then
+    python3 -m backend.scripts.seed_schools backend/seeds/delhi_schools.json || true
+fi
+
 # 4. Build Frontend
 echo "[4/7] Building Frontend (Favicon, Title, SEO, Light/Dark mode)..."
 cd "$REPO_DIR/frontend"

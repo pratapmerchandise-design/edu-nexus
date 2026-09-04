@@ -15,6 +15,27 @@ import json
 router = APIRouter()
 
 
+def _normalize_school_name(name: str) -> str:
+    """Normalize a school name for dedup matching.
+
+    Strips case, extra whitespace, trailing punctuation, and common honorifics
+    so 'Delhi Public School, Rohini', 'delhi public school rohini', and
+    'DPS Rohini' can be linked to the same canonical record in the future.
+    """
+    if not name:
+        return ""
+    import unicodedata
+    n = unicodedata.normalize("NFKD", name)
+    n = "".join(c for c in n if not unicodedata.combining(c))
+    n = n.lower()
+    # remove punctuation, collapse whitespace
+    n = re.sub(r"[^a-z0-9]+", " ", n)
+    n = re.sub(r"\s+", " ", n).strip()
+    # remove trailing/leading separators
+    n = n.strip(" ,.")
+    return n
+
+
 def _school_admins(db: Session, school_id: int):
     return db.query(models.SchoolMember).filter(
         models.SchoolMember.school_id == school_id,
@@ -38,7 +59,17 @@ def get_my_schools(
     school_members = db.query(models.SchoolMember).filter(models.SchoolMember.user_id == current_user.id).all()
     if not school_members and current_user.profile and current_user.profile.school and current_user.profile.school.strip():
         school_name = current_user.profile.school.strip()
+        # First try exact (case-insensitive) match
         school_obj = db.query(models.School).filter(models.School.name.ilike(school_name)).first()
+        # Then fall back to normalized-name match across all schools so we don't
+        # create yet another duplicate row for "Delhi Public School, Rohini" if
+        # one already exists under a slightly different spelling.
+        if not school_obj:
+            normalized = _normalize_school_name(school_name)
+            for s in db.query(models.School).all():
+                if _normalize_school_name(s.name) == normalized and normalized:
+                    school_obj = s
+                    break
         if not school_obj:
             school_obj = models.School(name=school_name)
             db.add(school_obj)
@@ -104,10 +135,12 @@ def search_schools(
             break
 
     scored = []
+    seen_normalized = set()
     for s in all_schools:
         s_name_lower = s.name.lower()
         s_alpha = re.sub(r'[^a-z0-9]', '', s_name_lower)
-        
+        s_normalized = _normalize_school_name(s.name)
+
         score = 999
         # Exact prefix match
         if s_name_lower.startswith(clean_q):
@@ -124,8 +157,14 @@ def search_schools(
         # Raw alphanumeric substring
         elif raw_alpha_q in s_alpha:
             score = 4
-        
+
         if score < 999:
+            # Dedupe: keep the best-scoring row per normalized name. This stops
+            # three identical "Delhi Public School, Rohini" rows from showing.
+            if s_normalized and s_normalized in seen_normalized:
+                continue
+            if s_normalized:
+                seen_normalized.add(s_normalized)
             scored.append((score, s))
 
     scored.sort(key=lambda item: (item[0], item[1].name))
@@ -135,16 +174,31 @@ def search_schools(
 @router.get("", response_model=List[schemas.SchoolOut])
 @router.get("/", response_model=List[schemas.SchoolOut])
 def get_all_schools(
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: Optional[models.User] = Depends(get_current_user_optional)
 ):
-    """Directory of schools. Active schools with members/admins or all schools for platform admins."""
-    if current_user and current_user.role == 'admin':
-        return db.query(models.School).order_by(models.School.name.asc()).all()
-    active_school_ids = [r[0] for r in db.query(models.SchoolMember.school_id).distinct().all()]
-    if not active_school_ids:
-        return []
-    return db.query(models.School).filter(models.School.id.in_(active_school_ids)).order_by(models.School.name.asc()).all()
+    """Public directory of schools. Returns the seeded verified catalog (always
+    visible) plus any user-created schools that have at least one member. This
+    way the directory is never empty once a seed list is in place."""
+    # Seeded/verified schools are always shown to everyone.
+    seeded_q = db.query(models.School).filter(models.School.verified == True)
+    if limit or offset:
+        seeded_q = seeded_q.order_by(models.School.name.asc()).offset(offset).limit(limit)
+    seeded = seeded_q.all()
+    seen = {s.id for s in seeded}
+
+    if not current_user or current_user.role != 'admin':
+        # Also surface schools that have at least one member (user-created hubs).
+        member_school_ids = [r[0] for r in db.query(models.SchoolMember.school_id).distinct().all()]
+        if member_school_ids:
+            extras = db.query(models.School).filter(
+                models.School.id.in_(member_school_ids),
+                ~models.School.id.in_(seen)
+            ).order_by(models.School.name.asc()).all()
+            seeded.extend(extras)
+    return seeded
 
 
 @router.get("/suggestions", response_model=List[schemas.SchoolSuggestionOut])
@@ -156,6 +210,24 @@ def list_school_suggestions(
     if current_user.role != 'admin':
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return db.query(models.SchoolSuggestion).filter(models.SchoolSuggestion.status == 'pending').order_by(models.SchoolSuggestion.created_at.desc()).all()
+
+
+@router.post("/seed", response_model=dict)
+def seed_schools(
+    records: List[dict],
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Bulk-load or update the verified campus directory. Platform admin only.
+
+    Accepts a JSON array of objects (same shape as the seed JSON files in
+    backend/seeds/). Idempotent: re-running will not create duplicates.
+    """
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Platform admin only")
+    from backend.scripts.seed_schools import seed_from_dict
+    stats = seed_from_dict(records)
+    return stats
 
 
 @router.post("/suggestions", response_model=schemas.SchoolSuggestionOut)
