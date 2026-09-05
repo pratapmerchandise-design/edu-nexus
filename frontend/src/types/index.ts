@@ -71,8 +71,18 @@ export interface Post {
   audience?: string;
   audience_community_id?: number | null;
   reply_privacy?: string;
+  // Follow-context: 0-2 people you follow who liked/commented on this post.
+  liked_by_following?: MiniUser[];
+  commented_by_following?: MiniUser[];
   created_at: string;
   location?: string;
+}
+
+export interface MiniUser {
+  id: number;
+  username: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
 }
 
 export interface Comment {

@@ -16,7 +16,60 @@ def get_public_post(post_id: int, db: Session = Depends(get_db)):
     if not post: raise HTTPException(status_code=404, detail="Public post not found")
     return {"id": post.id, "title": post.title, "content": post.content, "image_url": post.image_url, "created_at": post.created_at, "author": {"username": post.author.username, "full_name": post.author.profile.full_name if post.author.profile else post.author.username, "avatar_url": post.author.profile.avatar_url if post.author.profile else None}}
 
-def format_post_out(post: Post, current_user_id: int, db: Session) -> dict:
+def _mini_user(u: User) -> dict:
+    full_name = None
+    avatar = None
+    if u and u.profile:
+        full_name = u.profile.full_name
+        avatar = u.profile.avatar_url
+    return {
+        "id": u.id if u else 0,
+        "username": u.username if u else "unknown",
+        "full_name": full_name,
+        "avatar_url": avatar,
+    }
+
+
+def _social_proof(post: Post, current_user_id: int, following_ids: set, db: Session, limit: int = 2) -> dict:
+    """Return up to `limit` users from the current user's follow list who
+    liked or commented on this post. Excludes the current user and the post
+    author so the label never includes "you" or the author.
+    """
+    exclude = {current_user_id, post.author_id}
+    following_in_post = [uid for uid in following_ids if uid not in exclude]
+
+    # Sample of who liked (most recent first)
+    likers_q = db.query(Like).filter(Like.post_id == post.id)
+    if following_in_post:
+        likers_q = likers_q.filter(Like.user_id.in_(following_in_post))
+    else:
+        return {"liked_by_following": [], "commented_by_following": []}
+    liker_user_ids = [l.user_id for l in likers_q.order_by(Like.created_at.desc()).limit(limit).all()]
+
+    # Sample of who commented (most recent first)
+    commenters_q = db.query(Comment).filter(
+        Comment.post_id == post.id,
+        Comment.is_deleted == False,
+        Comment.author_id.in_(following_in_post),
+        Comment.author_id != current_user_id,
+        Comment.author_id != post.author_id,
+    )
+    commenter_user_ids = [c.author_id for c in commenters_q.order_by(Comment.created_at.desc()).limit(limit).all()]
+
+    def _users(ids):
+        if not ids:
+            return []
+        users = {u.id: u for u in db.query(User).filter(User.id.in_(ids)).all()}
+        # Preserve order from ids list
+        return [_mini_user(users[i]) for i in ids if i in users]
+
+    return {
+        "liked_by_following": _users(liker_user_ids),
+        "commented_by_following": _users(commenter_user_ids),
+    }
+
+
+def format_post_out(post: Post, current_user_id: int, db: Session, following_ids: Optional[set] = None) -> dict:
     author = post.author
     author_name = author.profile.full_name if author and author.profile else author.username
     author_avatar = author.profile.avatar_url if author and author.profile else None
@@ -67,6 +120,10 @@ def format_post_out(post: Post, current_user_id: int, db: Session) -> dict:
         "author_membership": _membership_info(author, db),
         "audience": getattr(post, "audience", "public") or "public",
         "audience_community_id": getattr(post, "audience_community_id", None),
+        # Follow-context: "X and Y liked this", "X and Y commented on this".
+        # We pass following_ids if the caller already computed them (e.g. in
+        # get_feed) to avoid a second query per post.
+        **_social_proof(post, current_user_id, following_ids or set(), db),
         "created_at": post.created_at
     }
 
@@ -159,7 +216,7 @@ def get_feed(
         ranked = sorted(posts, key=lambda p: (score(p), p.created_at), reverse=True)
         posts = ranked
 
-    return [format_post_out(p, current_user.id, db) for p in posts[offset:offset + limit]]
+    return [format_post_out(p, current_user.id, db, following_ids) for p in posts[offset:offset + limit]]
 
 @router.post("", response_model=PostOut)
 def create_post(

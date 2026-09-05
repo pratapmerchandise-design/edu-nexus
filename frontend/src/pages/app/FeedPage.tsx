@@ -8,10 +8,11 @@ import { SpotlightCard } from '../../components/reactbits/SpotlightCard';
 import { AuroraGlow } from '../../components/reactbits/AuroraGlow';
 import type { Post, Comment } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
-import { renderContentWithHighlights, timeAgo, isVideoUrl, isStickerOnlyContent } from '../../utils/textUtils';
-import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, ChevronUp, CornerDownRight, Send, FileText, GraduationCap, Check, Lock } from 'lucide-react';
+import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/textUtils';
+import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, Send, FileText, GraduationCap, Check } from 'lucide-react';
 import { GifPicker } from '../../components/GifPicker';
 import { StickerPicker } from '../../components/StickerPicker';
+import { InlineComments } from '../../components/InlineComments';
 
 export const FeedPage: React.FC = () => {
   const { user } = useAuth();
@@ -40,26 +41,15 @@ export const FeedPage: React.FC = () => {
   const [showLocationInput, setShowLocationInput] = useState(false);
   const [newLocation, setNewLocation] = useState('');
 
-  // Active Comment Modal State
-  const [activeCommentPost, setActiveCommentPost] = useState<Post | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [commentInput, setCommentInput] = useState('');
-  const [replyParentId, setReplyParentId] = useState<number | null>(null);
-  const [replyingToUser, setReplyingToUser] = useState<string | null>(null);
-  const [expandedReplies, setExpandedReplies] = useState<Record<number, boolean>>({});
-  const [showCommentStickerPicker, setShowCommentStickerPicker] = useState(false);
-  const commentFormRef = React.useRef<HTMLFormElement>(null);
+  // Inline comments: only one post is expanded at a time, comments live in a
+  // per-post cache so the user can flip between posts without re-fetching.
+  const [expandedCommentsPostId, setExpandedCommentsPostId] = useState<number | null>(null);
+  const [commentsByPostId, setCommentsByPostId] = useState<Record<number, Comment[]>>({});
+  const [loadingCommentsPostId, setLoadingCommentsPostId] = useState<number | null>(null);
+  const [commentInputs, setCommentInputs] = useState<Record<number, { text: string; parentId: number | null; replyToUser: string | null }>>({});
 
-  // Report Modal State
-  const [reportingPostId, setReportingPostId] = useState<number | null>(null);
-  const [reportReason, setReportReason] = useState('Spam');
-  const [reportDetails, setReportDetails] = useState('');
+  // State hooks above
 
-  // Image Lightbox State
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [sharePost, setSharePost] = useState<Post | null>(null);
-  const [shareConversations, setShareConversations] = useState<any[]>([]);
-  const [sharing, setSharing] = useState(false);
 
   const fetchPosts = async () => {
     try {
@@ -179,31 +169,6 @@ export const FeedPage: React.FC = () => {
     }
   };
 
-  const handleShare = async (post: Post) => {
-    setSharePost(post);
-    try { setShareConversations(await api.get<any[]>('/conversations')); } catch { setShareConversations([]); }
-  };
-
-  const shareExternally = async (post: Post) => {
-    const url = `${window.location.origin}/p/${post.id}`;
-    try {
-      if (navigator.share) await navigator.share({ title: post.title || 'EduNexus post', text: post.content.slice(0, 120), url });
-      else { await navigator.clipboard.writeText(url); alert('Post link copied!'); }
-    } catch { /* sharing was cancelled */ }
-  };
-
-  const shareToConversation = async (conversation: any) => {
-    if (!sharePost) return;
-    setSharing(true);
-    try {
-      const url = `${window.location.origin}/p/${sharePost.id}`;
-      await api.post(`/conversations/${conversation.id}/messages`, { content: `Shared a post with you: ${url}` });
-      setSharePost(null);
-      alert('Post shared in chat.');
-    } catch (e: any) { alert(e.message || 'Could not share in chat.'); }
-    finally { setSharing(false); }
-  };
-
   const handleVotePoll = async (postId: number, optionId: number) => {
     try {
       await api.post(`/posts/${postId}/poll/vote/${optionId}`);
@@ -213,149 +178,109 @@ export const FeedPage: React.FC = () => {
     }
   };
 
-  const openComments = async (post: Post) => {
-    setActiveCommentPost(post);
-    setReplyParentId(null);
-    setReplyingToUser(null);
-    try {
-      const comms = await api.get<Comment[]>(`/posts/${post.id}/comments`);
-      setComments(comms);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleToggleCommentLike = async (commentId: number) => {
+  const handleToggleCommentLike = async (commentId: number, postId: number) => {
     try {
       const res = await api.post<{ liked: boolean; likes_count: number }>(`/posts/comments/${commentId}/like`);
-      // Update both top-level comments and nested replies
+      // Update both top-level comments and nested replies for this post only.
       const apply = (list: Comment[]): Comment[] =>
         list.map((c) => {
           if (c.id === commentId) return { ...c, user_liked: res.liked, likes_count: res.likes_count };
           if (c.replies?.length) return { ...c, replies: apply(c.replies) };
           return c;
         });
-      setComments((prev) => apply(prev));
+      setCommentsByPostId((prev) => {
+        const list = prev[postId];
+        if (!list) return prev;
+        return { ...prev, [postId]: apply(list) };
+      });
     } catch (e) {
       console.error(e);
     }
   };
 
-  const toggleReplies = (commentId: number) => {
-    setExpandedReplies((prev) => ({
-      ...prev,
-      [commentId]: !prev[commentId],
-    }));
-  };
+  const canReplyForPost = React.useCallback(
+    (post: Post) => {
+      if (!user) return { allowed: true };
+      if (post.author_id === user.id) return { allowed: true };
 
-  const startReply = (commentId: number, username: string) => {
-    setReplyParentId(commentId);
-    setReplyingToUser(username);
-  };
+      const raw = (post.reply_privacy || 'everyone').toLowerCase();
+      const parts = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+      if (parts.has('everyone') || parts.size === 0) return { allowed: true };
 
-  const cancelReply = () => {
-    setReplyParentId(null);
-    setReplyingToUser(null);
-  };
-
-  const canReplyInfo = React.useMemo(() => {
-    if (!activeCommentPost || !user) return { allowed: true };
-    if (activeCommentPost.author_id === user.id) return { allowed: true };
-
-    const raw = (activeCommentPost.reply_privacy || 'everyone').toLowerCase();
-    const parts = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
-
-    if (parts.has('everyone') || parts.size === 0) return { allowed: true };
-
-    // 1. Check school
-    if (parts.has('school') || parts.has('my_school')) {
-      const curSchool = (user.profile?.school || '').trim().toLowerCase();
-      const authorSchool = (activeCommentPost.author_school || '').trim().toLowerCase();
-      if (curSchool && authorSchool && curSchool === authorSchool) {
-        return { allowed: true };
+      if (parts.has('school') || parts.has('my_school')) {
+        const curSchool = (user.profile?.school || '').trim().toLowerCase();
+        const authorSchool = (post.author_school || '').trim().toLowerCase();
+        if (curSchool && authorSchool && curSchool === authorSchool) return { allowed: true };
       }
-    }
 
-    // 2. Check mentioned
-    if (parts.has('mentioned')) {
-      const tag = `@${user.username.toLowerCase()}`;
-      if (
-        (activeCommentPost.content || '').toLowerCase().includes(tag) ||
-        (activeCommentPost.title || '').toLowerCase().includes(tag)
-      ) {
-        return { allowed: true };
+      if (parts.has('mentioned')) {
+        const tag = `@${user.username.toLowerCase()}`;
+        if (
+          (post.content || '').toLowerCase().includes(tag) ||
+          (post.title || '').toLowerCase().includes(tag)
+        ) {
+          return { allowed: true };
+        }
       }
-    }
 
-    const labels: string[] = [];
-    if (parts.has('school') || parts.has('my_school')) {
-      labels.push(`members from ${activeCommentPost.author_school || 'their school'}`);
-    }
-    if (parts.has('followers')) {
-      labels.push('followers');
-    }
-    if (parts.has('mentioned')) {
-      labels.push('mentioned accounts');
-    }
+      const labels: string[] = [];
+      if (parts.has('school') || parts.has('my_school')) labels.push(`members from ${post.author_school || 'their school'}`);
+      if (parts.has('followers')) labels.push('followers');
+      if (parts.has('mentioned')) labels.push('mentioned accounts');
+      return { allowed: false, reason: `Only ${labels.join(' or ')} can reply to this post.` };
+    },
+    [user]
+  );
 
-    return {
-      allowed: false,
-      reason: `Only ${labels.join(' or ')} can reply to this post.`,
-    };
-  }, [activeCommentPost, user]);
-
-  const handleAddComment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeCommentPost || !commentInput.trim()) return;
-
-    if (!canReplyInfo.allowed) {
-      alert(canReplyInfo.reason || 'You do not have permission to reply to this post.');
+  const toggleComments = async (post: Post) => {
+    if (expandedCommentsPostId === post.id) {
+      setExpandedCommentsPostId(null);
       return;
     }
-
-    try {
-      await api.post(`/posts/${activeCommentPost.id}/comments`, {
-        content: commentInput.trim(),
-        parent_id: replyParentId,
-      });
-      const sentParentId = replyParentId;
-      setCommentInput('');
-      setReplyParentId(null);
-      setReplyingToUser(null);
-      const comms = await api.get<Comment[]>(`/posts/${activeCommentPost.id}/comments`);
-      setComments(comms);
-      if (sentParentId) {
-        setExpandedReplies((prev) => ({ ...prev, [sentParentId]: true }));
+    setExpandedCommentsPostId(post.id);
+    if (!commentsByPostId[post.id]) {
+      setLoadingCommentsPostId(post.id);
+      try {
+        const comms = await api.get<Comment[]>(`/posts/${post.id}/comments`);
+        setCommentsByPostId((prev) => ({ ...prev, [post.id]: comms || [] }));
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoadingCommentsPostId(null);
       }
-      // Update comment count locally
+    }
+  };
+
+  const setCommentInputFor = (postId: number, patch: Partial<{ text: string; parentId: number | null; replyToUser: string | null }>) => {
+    setCommentInputs((prev) => {
+      const current = prev[postId] || { text: '', parentId: null, replyToUser: null };
+      return { ...prev, [postId]: { ...current, ...patch } };
+    });
+  };
+
+  const handleAddComment = async (postId: number) => {
+    const state = commentInputs[postId] || { text: '', parentId: null, replyToUser: null };
+    if (!state.text.trim()) return;
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+    const gate = canReplyForPost(post);
+    if (!gate.allowed) {
+      alert(gate.reason || 'You do not have permission to reply to this post.');
+      return;
+    }
+    try {
+      await api.post(`/posts/${postId}/comments`, {
+        content: state.text.trim(),
+        parent_id: state.parentId,
+      });
+      setCommentInputFor(postId, { text: '', parentId: null, replyToUser: null });
+      const comms = await api.get<Comment[]>(`/posts/${postId}/comments`);
+      setCommentsByPostId((prev) => ({ ...prev, [postId]: comms || [] }));
       setPosts((prev) =>
-        prev.map((p) =>
-          p.id === activeCommentPost.id
-            ? { ...p, comments_count: p.comments_count + 1 }
-            : p
-        )
+        prev.map((p) => (p.id === postId ? { ...p, comments_count: p.comments_count + 1 } : p))
       );
     } catch (err: any) {
       alert(err.message || 'Failed to add comment');
-    }
-  };
-
-  const handleReport = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reportingPostId) return;
-
-    try {
-      await api.post('/reports', {
-        target_type: 'post',
-        target_id: reportingPostId,
-        reason: reportReason,
-        details: reportDetails,
-      });
-      alert('Report submitted to moderators. Thank you.');
-      setReportingPostId(null);
-      setReportDetails('');
-    } catch (err: any) {
-      alert(err.message || 'Failed to submit report');
     }
   };
 
@@ -386,6 +311,16 @@ export const FeedPage: React.FC = () => {
       default:
         return { label: type, icon: Sparkles, className: 'bg-secondary text-muted-foreground border-border' };
     }
+  };
+
+  // Build a human label like "Ramesh and Suresh liked this" or
+  // "Ramesh and 3 others liked this". Capped at 2 names by the backend.
+  const buildSocialLabel = (people: { username: string; full_name?: string | null }[] | undefined, verb: string) => {
+    if (!people || people.length === 0) return null;
+    const display = (p: { username: string; full_name?: string | null }) => p.full_name || p.username;
+    if (people.length === 1) return `${display(people[0])} ${verb}`;
+    if (people.length === 2) return `${display(people[0])} and ${display(people[1])} ${verb}`;
+    return `${display(people[0])} and ${people.length - 1} others ${verb}`;
   };
 
   return (
@@ -525,7 +460,15 @@ export const FeedPage: React.FC = () => {
                         </span>
                       )}
                       <button
-                        onClick={() => setReportingPostId(post.id)}
+                        onClick={async () => {
+                          if (!confirm('Report this post to moderators?')) return;
+                          try {
+                            await api.post('/reports', { target_type: 'post', target_id: post.id, reason: 'Spam', details: '' });
+                            alert('Report submitted to moderators. Thank you.');
+                          } catch (e: any) {
+                            alert(e.message || 'Failed to submit report');
+                          }
+                        }}
                         className="text-muted-foreground hover:text-red-400 p-1"
                         title="Report post"
                       >
@@ -575,8 +518,8 @@ export const FeedPage: React.FC = () => {
                         </div>
                       </div>
                     ) : (
-                      <div 
-                        onClick={() => setPreviewImage(post.images[0])}
+                      <div
+                        onClick={() => window.open(post.images[0], '_blank')}
                         className="rounded-2xl overflow-hidden border border-border/80 bg-secondary/30 flex items-center justify-center cursor-pointer group hover:border-primary/50 transition-all shadow-sm"
                         title="Click to view full image"
                       >
@@ -625,8 +568,12 @@ export const FeedPage: React.FC = () => {
                     </button>
 
                     <button
-                      onClick={() => openComments(post)}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-foreground hover:bg-secondary transition-colors"
+                      onClick={() => toggleComments(post)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+                        expandedCommentsPostId === post.id
+                          ? 'text-primary font-bold bg-primary/10'
+                          : 'hover:text-foreground hover:bg-secondary'
+                      }`}
                     >
                       <MessageSquare className="w-4 h-4" />
                       <span>{post.comments_count} Comments</span>
@@ -641,11 +588,75 @@ export const FeedPage: React.FC = () => {
                       <Bookmark className={`w-4 h-4 ${post.user_saved ? 'fill-primary' : ''}`} />
                       <span>{post.user_saved ? 'Saved' : 'Save'}</span>
                     </button>
-                    <button onClick={() => handleShare(post)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-primary hover:bg-secondary transition-colors" title="Share post">
+                    <button
+                      onClick={async () => {
+                        const url = `${window.location.origin}/p/${post.id}`;
+                        try {
+                          if (navigator.share) await navigator.share({ title: post.title || 'EduNexus post', text: post.content.slice(0, 120), url });
+                          else { await navigator.clipboard.writeText(url); alert('Post link copied!'); }
+                        } catch { /* cancelled */ }
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-primary hover:bg-secondary transition-colors"
+                      title="Share post"
+                    >
                       <Send className="w-4 h-4" />
                       <span>Share</span>
                     </button>
                   </div>
+
+                  {/* Follow-context line: who you follow liked or commented on this */}
+                  {((post.liked_by_following && post.liked_by_following.length > 0) ||
+                    (post.commented_by_following && post.commented_by_following.length > 0)) && (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 text-[11px] text-muted-foreground">
+                      {(() => {
+                        const likers = post.liked_by_following || [];
+                        const commenters = post.commented_by_following || [];
+                        const likeLabel = buildSocialLabel(likers, 'liked this');
+                        const commentLabel = buildSocialLabel(commenters, 'commented on this');
+                        return (
+                          <>
+                            {likeLabel && (
+                              <div className="flex items-center gap-1.5">
+                                <div className="flex -space-x-1.5">
+                                  {likers.slice(0, 2).map((u) => (
+                                    <UserAvatar key={`lk-${u.id}`} src={u.avatar_url} username={u.username} size={18} className="ring-2 ring-card" />
+                                  ))}
+                                </div>
+                                <Heart className="w-3 h-3 fill-primary text-primary" />
+                                <span className="font-medium">{likeLabel}</span>
+                              </div>
+                            )}
+                            {commentLabel && (
+                              <div className="flex items-center gap-1.5">
+                                <div className="flex -space-x-1.5">
+                                  {commenters.slice(0, 2).map((u) => (
+                                    <UserAvatar key={`cm-${u.id}`} src={u.avatar_url} username={u.username} size={18} className="ring-2 ring-card" />
+                                  ))}
+                                </div>
+                                <MessageSquare className="w-3 h-3 text-primary" />
+                                <span className="font-medium">{commentLabel}</span>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Inline comments panel (only rendered for the expanded post) */}
+                  {expandedCommentsPostId === post.id && (
+                    <InlineComments
+                      post={post}
+                      user={user}
+                      comments={commentsByPostId[post.id] || []}
+                      loading={loadingCommentsPostId === post.id}
+                      commentState={commentInputs[post.id] || { text: '', parentId: null, replyToUser: null }}
+                      onChangeInput={(patch) => setCommentInputFor(post.id, patch)}
+                      onSubmit={() => handleAddComment(post.id)}
+                      onLikeComment={(cid) => handleToggleCommentLike(cid, post.id)}
+                      canReply={canReplyForPost(post)}
+                    />
+                  )}
                 </SpotlightCard>
               );
             })}
@@ -1060,351 +1071,7 @@ export const FeedPage: React.FC = () => {
         </div>
       )}
 
-        {/* Comments Modal - YouTube & Instagram Style */}
-        {activeCommentPost && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in">
-              {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card/80 backdrop-blur-sm shrink-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-foreground">Comments</h3>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary border border-primary/20">
-                    {comments.reduce((acc, curr) => acc + 1 + (curr.replies?.length || 0), 0)}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    setActiveCommentPost(null);
-                    setReplyParentId(null);
-                    setReplyingToUser(null);
-                  }}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Post audience indicator (post detail) */}
-              {activeCommentPost.audience && activeCommentPost.audience !== 'public' && (
-                <div className="px-6 py-2 border-b border-border bg-secondary/30 text-[11px] text-muted-foreground flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5" />
-                  Posted to {activeCommentPost.audience === 'followers' ? 'your Followers' : 'a Community'} only
-                </div>
-              )}
-
-              {/* Comments Scrollable List */}
-              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
-                {comments.length === 0 ? (
-                  <div className="text-center py-12 space-y-2">
-                    <MessageSquare className="w-8 h-8 text-muted-foreground/40 mx-auto" />
-                    <p className="text-sm font-semibold text-foreground">No comments yet</p>
-                    <p className="text-xs text-muted-foreground">Start the conversation by adding the first comment.</p>
-                  </div>
-                ) : (
-                  comments.map((c) => {
-                    const hasReplies = c.replies && c.replies.length > 0;
-                    const isExpanded = !!expandedReplies[c.id];
-
-                    return (
-                      <div key={c.id} className="space-y-2">
-                        {/* Parent Comment */}
-                        <div className="flex items-start gap-3">
-                          <UserAvatar
-                            src={c.author_avatar}
-                            username={c.author_username}
-                            membership={c.author_membership}
-                            size={34}
-                          />
-                          <div className="flex-1 min-w-0">
-                            {/* Author & Timestamp */}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-bold text-foreground hover:underline cursor-pointer flex items-center gap-1.5">
-                                {c.author_name || c.author_username}
-                                <MembershipBadge membership={c.author_membership} size={13} />
-                              </span>
-                              <span className="text-[11px] text-muted-foreground">@{c.author_username}</span>
-                              <span className="text-[10px] text-muted-foreground">• {timeAgo(c.created_at)}</span>
-                            </div>
-
-                            {/* Content */}
-                            {isStickerOnlyContent(c.content) ? (
-                              <div className="mt-1 flex flex-wrap gap-1">
-                                {c.content.trim().split(/\s+/).map((url, i) => (
-                                  <img key={i} src={url} alt="sticker" className="w-20 h-20 sm:w-24 sm:h-24" draggable={false} />
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-xs text-foreground/90 mt-1 whitespace-pre-wrap leading-relaxed">
-                                {renderContentWithHighlights(c.content)}
-                              </p>
-                            )}
-
-                            {/* Interaction Row (Like / Reply) */}
-                            <div className="flex items-center gap-4 mt-2 text-xs">
-                              {/* Like Button (unified reaction) */}
-                              <button
-                                type="button"
-                                onClick={() => handleToggleCommentLike(c.id)}
-                                className={`flex items-center gap-1.5 py-1 transition-colors ${
-                                  c.user_liked ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
-                                }`}
-                              >
-                                <Heart className={`w-3.5 h-3.5 ${c.user_liked ? 'fill-primary text-primary' : ''}`} />
-                                <span className="text-[11px]">{(c.likes_count ?? 0) > 0 ? c.likes_count : ''}</span>
-                              </button>
-
-                              {/* Reply Trigger */}
-                              <button
-                                type="button"
-                                onClick={() => startReply(c.id, c.author_username)}
-                                className="text-[11px] font-bold text-muted-foreground hover:text-primary transition-colors py-1"
-                              >
-                                Reply
-                              </button>
-                            </div>
-
-                            {/* Collapsible Nested Replies Toggle */}
-                            {hasReplies && (
-                              <div className="mt-2">
-                                <button
-                                  type="button"
-                                  onClick={() => toggleReplies(c.id)}
-                                  className="flex items-center gap-2 text-xs font-bold text-primary hover:text-primary/80 transition-colors py-1"
-                                >
-                                  <span className="w-5 h-[1px] bg-primary/40 inline-block"></span>
-                                  {isExpanded ? (
-                                    <>
-                                      <ChevronUp className="w-3.5 h-3.5" /> Hide {c.replies.length} {c.replies.length === 1 ? 'reply' : 'replies'}
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ChevronDown className="w-3.5 h-3.5" /> View {c.replies.length} {c.replies.length === 1 ? 'reply' : 'replies'}
-                                    </>
-                                  )}
-                                </button>
-
-                                {/* Expanded Replies List */}
-                                {isExpanded && (
-                                  <div className="mt-2 pl-4 space-y-3 border-l-2 border-border/80 ml-2">
-                                    {c.replies.map((reply) => {
-                                       return (
-                                        <div key={reply.id} className="flex items-start gap-2.5 pt-1">
-                                          <UserAvatar
-                                            src={reply.author_avatar}
-                                            username={reply.author_username}
-                                            membership={reply.author_membership}
-                                            size={26}
-                                          />
-                                          <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                              <span className="text-xs font-bold text-foreground hover:underline cursor-pointer flex items-center gap-1.5">
-                                                {reply.author_name || reply.author_username}
-                                                <MembershipBadge membership={reply.author_membership} size={12} />
-                                              </span>
-                                              <span className="text-[10px] text-muted-foreground">@{reply.author_username}</span>
-                                              <span className="text-[9px] text-muted-foreground">• {timeAgo(reply.created_at)}</span>
-                                            </div>
-                                            {isStickerOnlyContent(reply.content) ? (
-                                              <div className="mt-0.5 flex flex-wrap gap-1">
-                                                {reply.content.trim().split(/\s+/).map((url, i) => (
-                                                  <img key={i} src={url} alt="sticker" className="w-16 h-16" draggable={false} />
-                                                ))}
-                                              </div>
-                                            ) : (
-                                              <p className="text-xs text-foreground/90 mt-0.5 whitespace-pre-wrap leading-relaxed">
-                                                {renderContentWithHighlights(reply.content)}
-                                              </p>
-                                            )}
-
-                                            <div className="flex items-center gap-3 mt-1.5 text-xs">
-                                              <button
-                                                type="button"
-                                                onClick={() => handleToggleCommentLike(reply.id)}
-                                                className={`flex items-center gap-1 py-0.5 transition-colors ${
-                                                  reply.user_liked ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
-                                                }`}
-                                              >
-                                                 <Heart className={`w-3 h-3 ${reply.user_liked ? 'fill-primary text-primary' : ''}`} />
-                                                <span className="text-[10px]">{(reply.likes_count ?? 0) > 0 ? reply.likes_count : ''}</span>
-                                              </button>
-
-                                              <button
-                                                type="button"
-                                                onClick={() => startReply(c.id, reply.author_username)}
-                                                className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors py-0.5"
-                                              >
-                                                Reply
-                                              </button>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Bottom Sticky Input & Active Reply Banner */}
-              <div className="p-4 border-t border-border bg-card/95 backdrop-blur-md shrink-0">
-                {/* Active Reply Banner */}
-                {replyingToUser && (
-                  <div className="flex items-center justify-between bg-primary/10 border border-primary/20 rounded-xl px-3 py-1.5 mb-2 text-xs">
-                    <div className="flex items-center gap-1.5 text-primary font-semibold">
-                      <CornerDownRight className="w-3.5 h-3.5" />
-                      <span>Replying to <b className="font-bold">@{replyingToUser}</b></span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={cancelReply}
-                      className="p-1 text-muted-foreground hover:text-foreground rounded-full hover:bg-card transition-colors"
-                      title="Cancel reply"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-
-                {/* Comment Input Form or Locked Banner */}
-                {canReplyInfo.allowed ? (
-                  <form ref={commentFormRef} onSubmit={handleAddComment} className="flex items-center gap-3">
-                    <UserAvatar
-                      src={user?.profile?.avatar_url}
-                      username={user?.username}
-                      size={34}
-                    />
-                    <div className="flex-1 relative flex items-center">
-                      <input
-                        type="text"
-                        required
-                        placeholder={replyingToUser ? `Write a reply to @${replyingToUser}...` : "Add a comment..."}
-                        value={commentInput}
-                        onChange={(e) => setCommentInput(e.target.value)}
-                        className="w-full bg-secondary border border-border rounded-full pl-4 pr-20 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary transition-colors"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowCommentStickerPicker(true)}
-                        title="Reply with a sticker (Members)"
-                        className="absolute right-9 p-1.5 rounded-full text-primary hover:bg-primary/10 transition-all"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={!commentInput.trim()}
-                        className="absolute right-1.5 p-1.5 rounded-full bg-primary text-primary-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:opacity-90 transition-all"
-                        title="Post comment"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    {showCommentStickerPicker && (
-                      <StickerPicker
-                        onSelect={(sticker) => {
-                          setShowCommentStickerPicker(false);
-                          setCommentInput(sticker.url);
-                          setTimeout(() => commentFormRef.current?.requestSubmit(), 0);
-                        }}
-                        onClose={() => setShowCommentStickerPicker(false)}
-                        title="Reply with a sticker"
-                      />
-                    )}
-                  </form>
-                ) : (
-                  <div className="flex items-center gap-2.5 px-4 py-3 bg-secondary/80 border border-border rounded-2xl text-xs text-muted-foreground">
-                    <Lock className="w-4 h-4 text-primary shrink-0" />
-                    <span>{canReplyInfo.reason}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Report Modal */}
-        {reportingPostId && (
-          <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-thin">
-              <h3 className="text-base font-bold text-foreground uppercase">Report Post</h3>
-              <form onSubmit={handleReport} className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Reason</label>
-                  <select
-                    value={reportReason}
-                    onChange={(e) => setReportReason(e.target.value)}
-                    className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary"
-                  >
-                    <option value="Spam">Spam</option>
-                    <option value="Harassment">Harassment</option>
-                    <option value="Inappropriate content">Inappropriate Content</option>
-                    <option value="Scam">Scam</option>
-                    <option value="Fake account">Fake Account</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-
-                <div>
-                  <textarea
-                    rows={3}
-                    placeholder="Additional details for moderators (optional)..."
-                    value={reportDetails}
-                    onChange={(e) => setReportDetails(e.target.value)}
-                    className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary"
-                  />
-                </div>
-
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setReportingPostId(null)} className="button button-ghost flex-1">
-                    Cancel
-                  </button>
-                  <button type="submit" className="button button-primary flex-1">
-                    Submit Report
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-        {/* Image Preview Lightbox Modal */}
-        {previewImage && (
-          <div 
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
-            onClick={() => setPreviewImage(null)}
-          >
-            <div className="relative max-w-4xl max-h-[90vh] flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-              <img 
-                src={previewImage} 
-                alt="Enlarged preview" 
-                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10" 
-              />
-              <button 
-                onClick={() => setPreviewImage(null)}
-                className="absolute -top-3 -right-3 bg-card hover:bg-card/80 border border-border text-foreground p-2 rounded-full shadow-lg transition-colors cursor-pointer"
-                title="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-        {sharePost && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl">
-              <div className="flex items-center justify-between"><h3 className="font-bold text-foreground">Share post</h3><button onClick={() => setSharePost(null)} className="text-muted-foreground">✕</button></div>
-              <button onClick={() => shareExternally(sharePost)} className="w-full button button-ghost">Share outside EduNexus</button>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Recent chats and groups</p>{shareConversations.length === 0 ? <p className="text-xs text-muted-foreground">No conversations yet. Start a chat from Find Your Next Collaborator.</p> : <div className="max-h-60 overflow-y-auto space-y-2">{shareConversations.map((conversation) => { const person = conversation.other_user; const name = conversation.is_group ? (conversation.name || `Group (${conversation.member_count || 0})`) : (person?.profile?.full_name || person?.username || `Conversation ${conversation.id}`); const school = person?.profile?.school; return <button disabled={sharing} key={conversation.id} onClick={() => shareToConversation(conversation)} className="w-full text-left px-3 py-3 rounded-xl bg-secondary hover:bg-primary/10 border border-border text-xs font-semibold text-foreground"><span className="inline-flex items-center gap-2"><img src={conversation.is_group ? (conversation.avatar_url || '') : (person?.profile?.avatar_url || '')} className="w-8 h-8 rounded-full bg-primary/10 object-cover"/><span>{name}<span className="block text-[10px] font-normal text-muted-foreground">{conversation.is_group ? `${conversation.member_count || 0} members` : [school, person?.username ? `@${person.username}` : ''].filter(Boolean).join(' · ')}</span></span></span></button>; })}</div>}</div>
-            </div>
-          </div>
-        )}
-      </div>
+    </div>
     </AppLayout>
   );
 };

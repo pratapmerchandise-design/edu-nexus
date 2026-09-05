@@ -164,10 +164,34 @@ class PostOut(BaseModel):
     comments_count: int = 0
     user_liked: bool = False
     user_saved: bool = False
+    audience: Optional[str] = "public"
+    audience_community_id: Optional[int] = None
+    location: Optional[str] = None
+    author_membership: Optional["MembershipInfoOut"] = None
+    # Follow-context: a small sample of people-you-follow who liked or commented.
+    # Used to render "Ramesh and Suresh liked this" and similar. Never includes
+    # the current user, never includes the post author, capped at 2 per bucket.
+    liked_by_following: List["MiniUserOut"] = []
+    commented_by_following: List["MiniUserOut"] = []
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class MiniUserOut(BaseModel):
+    """A tiny user object for follow-context labels and avatars."""
+    id: int
+    username: str
+    full_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class MembershipInfoOut(BaseModel):
+    tier: Optional[str] = None
+    color: Optional[str] = None
+    is_active: bool = False
+    expires_at: Optional[datetime] = None
 
 # --- Forum Schemas ---
 class ForumCategoryOut(BaseModel):
