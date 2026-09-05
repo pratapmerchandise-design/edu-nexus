@@ -96,6 +96,7 @@ export const AppContent: React.FC = () => {
       <Route path="/app/profile/:username" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/app/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
       <Route path="/app/school" element={<ProtectedRoute><SchoolHubPage /></ProtectedRoute>} />
+      <Route path="/app/schools" element={<ProtectedRoute><SchoolHubPage /></ProtectedRoute>} />
       <Route path="/app/membership" element={<ProtectedRoute><MembershipPage /></ProtectedRoute>} />
       <Route path="/app/admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
 

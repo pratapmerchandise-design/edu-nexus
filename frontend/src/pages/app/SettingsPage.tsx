@@ -207,7 +207,7 @@ export const SettingsPage: React.FC = () => {
 
             {user?.profile?.school ? (
               <Link
-                to="/app/schools"
+                to="/app/school"
                 className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline px-3.5 py-2 rounded-xl bg-primary/10 border border-primary/20 shrink-0 w-fit transition-all hover:bg-primary/20"
               >
                 <Building2 className="w-4 h-4" />
