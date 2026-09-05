@@ -177,9 +177,39 @@ async def serve_upload(filename: str, request: Request):
 
 @app.on_event("startup")
 def startup_event():
+    # 1. Apply any pending additive migrations. These are idempotent — each
+    #    checks whether the column already exists and bails early. This means
+    #    we can deploy schema changes safely without an out-of-band step.
+    try:
+        from backend.migrate_school_columns import run as _run_school_cols
+        _run_school_cols()
+    except Exception as e:
+        print(f"[Startup] school columns migration skipped: {e}")
+    try:
+        from backend.migrate_post_audience_any import run as _run_post_audience
+        _run_post_audience()
+    except Exception as e:
+        print(f"[Startup] post audience migration skipped: {e}")
+
+    # 2. Ensure the verified campus directory is populated. The seed file is
+    #    bundled with the repo; if it exists and the table is mostly empty
+    #    (e.g. fresh DB), bulk-load it. This is a no-op when schools already
+    #    exist, so it's safe to run on every boot.
+    try:
+        # Resolve the project root from this file's location. main.py lives at
+        # <root>/backend/app/main.py, so two dirname() calls land on <root>.
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        seed_path = os.path.join(project_root, "backend", "seeds", "delhi_schools.json")
+        if os.path.exists(seed_path):
+            from backend.scripts.seed_schools import seed_from_file
+            seed_from_file(seed_path)
+            print(f"[Startup] Seeded schools from {seed_path}")
+    except Exception as e:
+        print(f"[Startup] school seed skipped: {e}")
+
+    # 3. Ensure primary administrator exists with high-entropy production credentials
     db = SessionLocal()
     try:
-        # Ensure primary administrator exists with high-entropy production credentials
         admin_pass = os.getenv("ADMIN_INITIAL_PASSWORD", "SarthakVermaEdu12@")
         admin_user = db.query(User).filter(User.username == "admin").first()
         if not admin_user:

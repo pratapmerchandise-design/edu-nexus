@@ -30,6 +30,7 @@ export const SignupPage: React.FC = () => {
     country: '',
     city: '',
     school: '',
+    school_id: undefined as number | undefined,
     grade: '',
     interests: [] as string[],
     skills: [] as string[],
@@ -200,6 +201,7 @@ export const SignupPage: React.FC = () => {
       const payload = {
         ...form,
         school: form.school || null,
+        school_id: form.school_id || null,
         phone: form.phone || null,
         grade: form.grade || null,
       };
@@ -372,7 +374,7 @@ export const SignupPage: React.FC = () => {
                   </label>
                   <SchoolAutocompleteInput
                     value={form.school}
-                    onChange={(schoolName) => setForm({ ...form, school: schoolName })}
+                    onChange={(schoolName, schoolId) => setForm({ ...form, school: schoolName, school_id: schoolId })}
                     placeholder="Search campus, e.g. DPS, Modern School..."
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">Select your exact campus from verified schools to connect with classmates.</p>

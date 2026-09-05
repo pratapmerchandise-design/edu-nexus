@@ -17,7 +17,6 @@ interface SchoolAutocompleteInputProps {
   inputClassName?: string;
   required?: boolean;
 }
-
 export const SchoolAutocompleteInput: React.FC<SchoolAutocompleteInputProps> = ({
   value,
   onChange,
@@ -27,6 +26,7 @@ export const SchoolAutocompleteInput: React.FC<SchoolAutocompleteInputProps> = (
   required = false,
 }) => {
   const [query, setQuery] = useState(value || '');
+  const [selectedId, setSelectedId] = useState<number | undefined>(undefined);
   const [suggestions, setSuggestions] = useState<SchoolItem[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -73,6 +73,7 @@ export const SchoolAutocompleteInput: React.FC<SchoolAutocompleteInputProps> = (
 
   const handleSelect = (school: SchoolItem) => {
     setQuery(school.name);
+    setSelectedId(school.id);
     onChange(school.name, school.id);
     setIsOpen(false);
   };
@@ -80,14 +81,16 @@ export const SchoolAutocompleteInput: React.FC<SchoolAutocompleteInputProps> = (
   const handleSelectCustom = () => {
     const trimmed = query.trim();
     if (trimmed) {
-      onChange(trimmed);
+      setSelectedId(undefined);
+      onChange(trimmed, undefined);
       setIsOpen(false);
     }
   };
 
   const handleClear = () => {
     setQuery('');
-    onChange('');
+    setSelectedId(undefined);
+    onChange('', undefined);
     setSuggestions([]);
     inputRef.current?.focus();
   };
@@ -143,7 +146,10 @@ export const SchoolAutocompleteInput: React.FC<SchoolAutocompleteInputProps> = (
           onChange={(e) => {
             const nextVal = e.target.value;
             setQuery(nextVal);
-            onChange(nextVal);
+            // Typing breaks the previous "selected" match; subsequent signup
+            // will be sent as a brand-new (custom) school.
+            if (selectedId) setSelectedId(undefined);
+            onChange(nextVal, undefined);
             setIsOpen(true);
             setHighlightedIndex(-1);
           }}
