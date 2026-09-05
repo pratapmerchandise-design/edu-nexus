@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from backend.app.database import get_db
-from backend.app.models import Notification, User
+from backend.app.models import Notification, User, Follow
 from backend.app.schemas import NotificationOut
 from backend.app.auth.security import get_current_user
 
@@ -22,6 +22,21 @@ def get_notifications(
         sender_avatar = None
         if n.sender and n.sender.profile:
             sender_avatar = n.sender.profile.avatar_url
+
+        is_pending = True
+        if n.type == "follow_request":
+            # Check if this follow request is still actively pending in the database
+            is_pending = db.query(Follow).filter(
+                Follow.follower_id == n.sender_id,
+                Follow.followed_id == current_user.id,
+                Follow.status == "pending"
+            ).first() is not None
+            if not is_pending:
+                # If the follow request is no longer pending (already accepted/declined/cancelled),
+                # clean up this obsolete notification from database and do not display it
+                db.delete(n)
+                continue
+
         res.append({
             "id": n.id,
             "type": n.type,
@@ -32,8 +47,10 @@ def get_notifications(
             "created_at": n.created_at,
             "sender_avatar": sender_avatar,
             "sender_username": n.sender.username if n.sender else None,
-            "sender_id": n.sender_id
+            "sender_id": n.sender_id,
+            "is_pending_request": is_pending
         })
+    db.commit()
     return res
 
 @router.patch("/{notification_id}/read")
@@ -65,3 +82,31 @@ def mark_all_read(
     ).update({"is_read": True})
     db.commit()
     return {"message": "All notifications marked as read"}
+
+@router.delete("/clear-all")
+def clear_all_notifications(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    db.query(Notification).filter(
+        Notification.recipient_id == current_user.id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"message": "All notifications cleared"}
+
+@router.delete("/{notification_id}")
+def delete_notification(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    notif = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.recipient_id == current_user.id
+    ).first()
+
+    if notif:
+        db.delete(notif)
+        db.commit()
+
+    return {"message": "Notification deleted successfully"}

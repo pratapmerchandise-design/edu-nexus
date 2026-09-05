@@ -3,13 +3,24 @@ import { AppLayout } from '../../components/AppLayout';
 import { api } from '../../services/api';
 import type { NotificationItem } from '../../types';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCheck, Heart, MessageSquare, UserPlus, Award, Sparkles, UserCheck, Check } from 'lucide-react';
+import { 
+  Bell, 
+  CheckCheck, 
+  Heart, 
+  MessageSquare, 
+  UserPlus, 
+  Award, 
+  Sparkles, 
+  UserCheck, 
+  Check, 
+  Trash2 
+} from 'lucide-react';
 
 export const NotificationsPage: React.FC = () => {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [requestStatus, setRequestStatus] = useState<{ [notifId: number]: 'accepted' | 'rejected' }>({});
+  const [processingId, setProcessingId] = useState<number | null>(null);
 
   const fetchNotifications = async () => {
     try {
@@ -50,31 +61,68 @@ export const NotificationsPage: React.FC = () => {
     }
   };
 
+  const handleClearAll = async () => {
+    if (!window.confirm('Are you sure you want to clear all notifications?')) return;
+    try {
+      await api.delete('/notifications/clear-all');
+      setNotifications([]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteNotification = async (e: React.MouseEvent, notifId: number) => {
+    e.stopPropagation();
+    setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    try {
+      await api.delete(`/notifications/${notifId}`);
+    } catch (err: any) {
+      console.error('Failed to delete notification:', err);
+    }
+  };
+
   const handleAcceptFollow = async (e: React.MouseEvent, notif: NotificationItem) => {
     e.stopPropagation();
     const username = notif.sender_username || notif.link?.split('/').pop();
     if (!username) return;
+
+    setProcessingId(notif.id);
     try {
       await api.post(`/users/${username}/accept-follow`);
-      setRequestStatus((prev) => ({ ...prev, [notif.id]: 'accepted' }));
-      await api.patch(`/notifications/${notif.id}/read`);
-      setNotifications((prev) => prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n)));
+      // Cleanly delete from DB
+      try {
+        await api.delete(`/notifications/${notif.id}`);
+      } catch (e) {
+        // Already handled by accept-follow
+      }
+      // Remove from UI
+      setNotifications((prev) => prev.filter((n) => n.id !== notif.id));
     } catch (err: any) {
       alert(err.message || 'Failed to accept request');
+    } finally {
+      setProcessingId(null);
     }
   };
 
   const handleRejectFollow = async (e: React.MouseEvent, notif: NotificationItem) => {
     e.stopPropagation();
     const username = notif.sender_username || notif.link?.split('/').pop();
-    if (!username) return;
+
+    // Immediately remove from UI so user is never blocked or confused
+    setNotifications((prev) => prev.filter((n) => n.id !== notif.id));
+
     try {
-      await api.post(`/users/${username}/reject-follow`);
-      setRequestStatus((prev) => ({ ...prev, [notif.id]: 'rejected' }));
-      await api.patch(`/notifications/${notif.id}/read`);
-      setNotifications((prev) => prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n)));
+      if (username) {
+        await api.post(`/users/${username}/reject-follow`);
+      }
     } catch (err: any) {
-      alert(err.message || 'Failed to reject request');
+      console.warn('Reject follow error:', err);
+    }
+
+    try {
+      await api.delete(`/notifications/${notif.id}`);
+    } catch (err: any) {
+      console.warn('Delete notification error:', err);
     }
   };
 
@@ -94,21 +142,31 @@ export const NotificationsPage: React.FC = () => {
   return (
     <AppLayout>
       <div className="max-w-3xl mx-auto space-y-6">
-        <div className="bg-card border border-border rounded-2xl p-6 flex items-center justify-between">
+        <div className="bg-card border border-border rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold uppercase tracking-tight text-foreground flex items-center gap-2">
               <Bell className="w-5 h-5 text-primary" /> Notifications
             </h2>
-            <p className="text-xs text-muted-foreground">Stay updated on followers, likes, comments, and direct messages.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Stay updated on followers, likes, comments, and direct messages.</p>
           </div>
 
-          {notifications.some((n) => !n.is_read) && (
-            <button
-              onClick={handleMarkAllRead}
-              className="px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs font-bold text-primary hover:bg-white/5 flex items-center gap-1.5"
-            >
-              <CheckCheck className="w-4 h-4" /> Mark All Read
-            </button>
+          {notifications.length > 0 && (
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {notifications.some((n) => !n.is_read) && (
+                <button
+                  onClick={handleMarkAllRead}
+                  className="px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs font-bold text-primary hover:bg-white/5 flex items-center gap-1.5 transition-all shadow-sm"
+                >
+                  <CheckCheck className="w-4 h-4" /> Mark All Read
+                </button>
+              )}
+              <button
+                onClick={handleClearAll}
+                className="px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs font-bold text-muted-foreground hover:text-red-400 hover:border-red-500/30 flex items-center gap-1.5 transition-all shadow-sm"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Clear All
+              </button>
+            </div>
           )}
         </div>
 
@@ -122,59 +180,95 @@ export const NotificationsPage: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {notifications.map((n) => (
-              <div
-                key={n.id}
-                onClick={() => handleMarkRead(n.id, n.link)}
-                className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-start gap-4 ${
-                  !n.is_read
-                    ? 'bg-secondary border-primary/30 shadow-md shadow-primary/20'
-                    : 'bg-card border-border opacity-75 hover:opacity-100'
-                }`}
-              >
-                <div className="p-2 rounded-full bg-secondary border border-border shrink-0">
-                  {getIcon(n.type)}
-                </div>
+            {notifications.map((n) => {
+              const defaultLink = n.link || (n.sender_username ? `/app/profile/${n.sender_username}` : undefined);
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-foreground">{n.title}</h4>
-                    <span className="text-[9px] text-muted-foreground">{new Date(n.created_at).toLocaleDateString()}</span>
+              return (
+                <div
+                  key={n.id}
+                  onClick={() => handleMarkRead(n.id, defaultLink)}
+                  className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-start gap-3.5 relative group ${
+                    !n.is_read
+                      ? 'bg-secondary/60 border-primary/30 shadow-md shadow-primary/10'
+                      : 'bg-card border-border opacity-80 hover:opacity-100'
+                  }`}
+                >
+                  {/* Sender Avatar / Icon - Clickable to Profile */}
+                  <div
+                    onClick={(e) => {
+                      if (n.sender_username) {
+                        e.stopPropagation();
+                        handleMarkRead(n.id);
+                        navigate(`/app/profile/${n.sender_username}`);
+                      }
+                    }}
+                    className={`w-10 h-10 rounded-full bg-secondary border border-border flex items-center justify-center shrink-0 overflow-hidden ${
+                      n.sender_username ? 'cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all' : ''
+                    }`}
+                    title={n.sender_username ? `View @${n.sender_username}'s profile` : undefined}
+                  >
+                    {n.sender_avatar ? (
+                      <img src={n.sender_avatar} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      getIcon(n.type)
+                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">{n.body}</p>
 
-                  {/* Follow Request Quick Actions */}
-                  {n.type === 'follow_request' && (
-                    <div className="mt-2.5 flex items-center gap-2">
-                      {requestStatus[n.id] === 'accepted' ? (
-                        <span className="px-2.5 py-1 rounded-xl bg-primary/20 text-primary text-[10px] font-bold flex items-center gap-1">
-                          <Check className="w-3 h-3" /> Request Accepted
-                        </span>
-                      ) : requestStatus[n.id] === 'rejected' ? (
-                        <span className="px-2.5 py-1 rounded-xl bg-secondary text-muted-foreground text-[10px] font-bold">
-                          Request Declined
-                        </span>
-                      ) : (
-                        <>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-xs font-bold text-foreground">{n.title}</h4>
+                        {n.sender_username && (
                           <button
-                            onClick={(e) => handleAcceptFollow(e, n)}
-                            className="px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 flex items-center gap-1 shadow-sm transition-all"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMarkRead(n.id);
+                              navigate(`/app/profile/${n.sender_username}`);
+                            }}
+                            className="text-[11px] font-semibold text-primary hover:underline inline-flex items-center"
                           >
-                            <Check className="w-3.5 h-3.5" /> Confirm
+                            @{n.sender_username}
                           </button>
-                          <button
-                            onClick={(e) => handleRejectFollow(e, n)}
-                            className="px-2.5 py-1.5 rounded-xl bg-secondary border border-border text-xs font-bold text-muted-foreground hover:text-foreground transition-all"
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] text-muted-foreground">{new Date(n.created_at).toLocaleDateString()}</span>
+                        <button
+                          onClick={(e) => handleDeleteNotification(e, n.id)}
+                          className="p-1 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                          title="Delete notification"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  )}
+
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{n.body}</p>
+
+                    {/* Follow Request Quick Actions */}
+                    {n.type === 'follow_request' && n.is_pending_request !== false && (
+                      <div className="mt-2.5 flex items-center gap-2">
+                        <button
+                          disabled={processingId === n.id}
+                          onClick={(e) => handleAcceptFollow(e, n)}
+                          className="px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Confirm
+                        </button>
+                        <button
+                          disabled={processingId === n.id}
+                          onClick={(e) => handleRejectFollow(e, n)}
+                          className="px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs font-bold text-muted-foreground hover:text-red-400 hover:border-red-500/30 transition-all disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -223,13 +223,30 @@ def accept_follow_request(username: str, current_user: User = Depends(get_curren
     if not requester:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    # Delete incoming follow_request notification so it is removed from notifications
+    db.query(Notification).filter(
+        Notification.recipient_id == current_user.id,
+        Notification.sender_id == requester.id,
+        Notification.type == "follow_request"
+    ).delete(synchronize_session=False)
+
     req = db.query(Follow).filter(
         Follow.follower_id == requester.id,
         Follow.followed_id == current_user.id,
         Follow.status == 'pending'
     ).first()
+
     if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Follow request not found")
+        # Check if already accepted
+        already = db.query(Follow).filter(
+            Follow.follower_id == requester.id,
+            Follow.followed_id == current_user.id,
+            Follow.status == 'accepted'
+        ).first()
+        db.commit()
+        if already:
+            return {"message": "Already following", "success": True, "follow_status": "accepted"}
+        return {"message": "Follow request already handled", "success": True, "follow_status": "none"}
 
     req.status = 'accepted'
 
@@ -244,13 +261,6 @@ def accept_follow_request(username: str, current_user: User = Depends(get_curren
         link=f"/app/profile/{current_user.username}"
     )
     db.add(notif)
-
-    # Mark incoming follow_request notification as read
-    db.query(Notification).filter(
-        Notification.recipient_id == current_user.id,
-        Notification.sender_id == requester.id,
-        Notification.type == "follow_request"
-    ).update({"is_read": True})
 
     # If now mutual followers, auto-accept any pending direct message conversation
     reverse_follow = db.query(Follow).filter(
@@ -284,12 +294,12 @@ def reject_follow_request(username: str, current_user: User = Depends(get_curren
     if req:
         db.delete(req)
 
-    # Mark incoming follow_request notification as read
+    # Delete incoming follow_request notification so it is removed from notifications
     db.query(Notification).filter(
         Notification.recipient_id == current_user.id,
         Notification.sender_id == requester.id,
         Notification.type == "follow_request"
-    ).update({"is_read": True})
+    ).delete(synchronize_session=False)
 
     db.commit()
     return {"message": "Follow request rejected", "success": True}

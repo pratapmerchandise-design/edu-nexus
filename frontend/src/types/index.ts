@@ -254,6 +254,7 @@ export interface NotificationItem {
   sender_avatar?: string;
   sender_username?: string;
   sender_id?: number;
+  is_pending_request?: boolean;
 }
 
 export interface ReportItem {

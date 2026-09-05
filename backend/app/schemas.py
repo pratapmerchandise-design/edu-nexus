@@ -410,6 +410,7 @@ class NotificationOut(BaseModel):
     sender_avatar: Optional[str] = None
     sender_username: Optional[str] = None
     sender_id: Optional[int] = None
+    is_pending_request: Optional[bool] = True
 
     class Config:
         from_attributes = True

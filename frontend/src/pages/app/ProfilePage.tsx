@@ -9,7 +9,7 @@ import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/te
 import type { User, Post } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Edit3, Share2, UserCheck, UserPlus, Clock, Check, X, Bell } from 'lucide-react';
+import { Edit3, Share2, UserCheck, UserPlus, Clock, Check, Bell } from 'lucide-react';
 import { FollowListModal } from '../../components/FollowListModal';
 
 export const ProfilePage: React.FC = () => {

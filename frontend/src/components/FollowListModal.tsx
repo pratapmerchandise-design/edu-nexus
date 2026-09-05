@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import type { User } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { MembershipBadge } from './MembershipBadge';
-import { X, Search, UserCheck, UserPlus, Clock, UserX, Check, ShieldAlert } from 'lucide-react';
+import { X, Search, UserCheck, UserPlus, Clock, UserX, Check } from 'lucide-react';
 import { AuroraGlow } from './reactbits/AuroraGlow';
 
 interface FollowListModalProps {
@@ -268,7 +268,6 @@ export const FollowListModal: React.FC<FollowListModalProps> = ({
               const fullName = targetUser.profile?.full_name || targetUser.username;
               const isFollowerTab = activeTab === 'followers';
               const isRequestsTab = activeTab === 'requests';
-              const isFollowingTab = activeTab === 'following';
 
               const followStatus = targetUser.follow_status || (targetUser.is_following ? 'accepted' : 'none');
 
