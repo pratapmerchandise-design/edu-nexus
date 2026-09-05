@@ -1,20 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from backend.app.database import get_db
 from backend.app.models import Post, PostImage, PollOption, PollVote, Like, Comment, CommentLike, SavedPost, User, Notification, Follow, Interest, Skill, UserMembership, SchoolMember
 from backend.app import membership_config as mconfig
 from backend.app.schemas import PostCreate, PostOut, CommentCreate, CommentOut
-from backend.app.auth.security import get_current_user
+from backend.app.auth.security import get_current_user, get_current_user_optional
 from backend.app.utils import _membership_info
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
-@router.get("/public/{post_id}")
-def get_public_post(post_id: int, db: Session = Depends(get_db)):
-    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False, Post.audience == 'public').first()
-    if not post: raise HTTPException(status_code=404, detail="Public post not found")
-    return {"id": post.id, "title": post.title, "content": post.content, "image_url": post.image_url, "created_at": post.created_at, "author": {"username": post.author.username, "full_name": post.author.profile.full_name if post.author.profile else post.author.username, "avatar_url": post.author.profile.avatar_url if post.author.profile else None}}
 
 def _mini_user(u: User) -> dict:
     full_name = None
@@ -126,6 +121,62 @@ def format_post_out(post: Post, current_user_id: int, db: Session, following_ids
         **_social_proof(post, current_user_id, following_ids or set(), db),
         "created_at": post.created_at
     }
+
+@router.get("/public/{post_id}", response_model=PostOut)
+def get_public_post(post_id: int, request: Request, db: Session = Depends(get_db)):
+    viewer = get_current_user_optional(request, db)
+    viewer_id = viewer.id if viewer else 0
+
+    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False).first()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    aud = getattr(post, 'audience', 'public') or 'public'
+    if aud != 'public':
+        if not viewer:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This post is private. Please log in to view.")
+        if post.author_id != viewer.id:
+            if aud == 'followers':
+                is_following = db.query(Follow).filter(
+                    Follow.follower_id == viewer.id,
+                    Follow.followed_id == post.author_id,
+                    Follow.status == 'accepted'
+                ).first() is not None
+                if not is_following:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This post is only visible to followers.")
+            elif aud == 'community':
+                viewer_schools = {m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == viewer.id).all()}
+                if getattr(post, 'audience_community_id', None) not in viewer_schools:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This post is only visible to school community members.")
+
+    return format_post_out(post, viewer_id, db)
+
+@router.get("/{post_id}", response_model=PostOut)
+def get_single_post(
+    post_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False).first()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    aud = getattr(post, 'audience', 'public') or 'public'
+    if aud != 'public' and post.author_id != current_user.id:
+        if aud == 'followers':
+            is_following = db.query(Follow).filter(
+                Follow.follower_id == current_user.id,
+                Follow.followed_id == post.author_id,
+                Follow.status == 'accepted'
+            ).first() is not None
+            if not is_following:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This post is only visible to followers.")
+        elif aud == 'community':
+            viewer_schools = {m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).all()}
+            if getattr(post, 'audience_community_id', None) not in viewer_schools:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This post is only visible to school community members.")
+
+    return format_post_out(post, current_user.id, db)
 
 @router.get("", response_model=List[PostOut])
 def get_feed(
@@ -351,7 +402,10 @@ def vote_poll(post_id: int, option_id: int, current_user: User = Depends(get_cur
     return {"message": "Vote recorded"}
 
 @router.get("/{post_id}/comments", response_model=List[CommentOut])
-def get_comments(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_comments(post_id: int, request: Request, db: Session = Depends(get_db)):
+    viewer = get_current_user_optional(request, db)
+    viewer_id = viewer.id if viewer else 0
+
     all_comments = db.query(Comment).filter(
         Comment.post_id == post_id,
         Comment.is_deleted == False
@@ -373,7 +427,7 @@ def get_comments(post_id: int, db: Session = Depends(get_db), current_user: User
             "parent_id": c.parent_id,
             "content": c.content,
             "likes_count": db.query(CommentLike).filter(CommentLike.comment_id == c.id).count(),
-            "user_liked": db.query(CommentLike).filter(CommentLike.comment_id == c.id, CommentLike.user_id == current_user.id).first() is not None,
+            "user_liked": (db.query(CommentLike).filter(CommentLike.comment_id == c.id, CommentLike.user_id == viewer_id).first() is not None) if viewer_id else False,
             "author_membership": _membership_info(author, db),
             "created_at": c.created_at,
             "replies": []

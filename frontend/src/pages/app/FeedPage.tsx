@@ -14,6 +14,7 @@ import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIco
 import { GifPicker } from '../../components/GifPicker';
 import { StickerPicker } from '../../components/StickerPicker';
 import { InlineComments } from '../../components/InlineComments';
+import { SharePostModal } from '../../components/SharePostModal';
 
 export const FeedPage: React.FC = () => {
   const { user } = useAuth();
@@ -22,6 +23,7 @@ export const FeedPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [feedMode, setFeedMode] = useState<'for-you' | 'following' | 'trending' | 'school'>('for-you');
+  const [sharingPost, setSharingPost] = useState<Post | null>(null);
   
   // Post Creation State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -601,13 +603,7 @@ export const FeedPage: React.FC = () => {
                       <span>{post.user_saved ? 'Saved' : 'Save'}</span>
                     </button>
                     <button
-                      onClick={async () => {
-                        const url = `${window.location.origin}/p/${post.id}`;
-                        try {
-                          if (navigator.share) await navigator.share({ title: post.title || 'EduNexus post', text: post.content.slice(0, 120), url });
-                          else { await navigator.clipboard.writeText(url); alert('Post link copied!'); }
-                        } catch { /* cancelled */ }
-                      }}
+                      onClick={() => setSharingPost(post)}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-primary hover:bg-secondary transition-colors"
                       title="Share post"
                     >
@@ -1082,6 +1078,13 @@ export const FeedPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Share Post Modal */}
+      <SharePostModal
+        isOpen={!!sharingPost}
+        onClose={() => setSharingPost(null)}
+        post={sharingPost}
+      />
 
     </div>
     </AppLayout>

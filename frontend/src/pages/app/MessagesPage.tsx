@@ -4,7 +4,7 @@ import { api, uploadFile } from '../../services/api';
 import type { Conversation, Message } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Send, Ban, MessageSquare, Check, CheckCheck, Smile, Paperclip, Mic, Square, X, XCircle, Reply, ImageIcon, Lock, Camera, BarChart2, MoreHorizontal, Trash, Shield, Film, FileText, Sparkles } from 'lucide-react';
+import { Send, Ban, MessageSquare, Check, CheckCheck, Smile, Paperclip, Mic, Square, X, XCircle, Reply, ImageIcon, Lock, Camera, BarChart2, MoreHorizontal, Trash, Shield, Film, FileText, Sparkles, Share2 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { CreateGroupModal } from '../../components/CreateGroupModal';
 import { InviteModal } from '../../components/InviteModal';
@@ -814,7 +814,38 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
                                     ))}
                                   </div>
                                 ) : (
-                                  <span className="break-words whitespace-pre-wrap">{renderContentWithHighlights(m.content)}</span>
+                                  <>
+                                     <span className="break-words whitespace-pre-wrap">{renderContentWithHighlights(m.content)}</span>
+                                     {(() => {
+                                       const match = m.content.match(/(?:https?:\/\/[^\s/]+)?\/(?:p|post|posts)\/(\d+)/i);
+                                       if (match && match[1]) {
+                                         const postId = match[1];
+                                         return (
+                                           <div 
+                                             onClick={(e) => {
+                                               e.stopPropagation();
+                                               navigate(`/app/posts/${postId}`);
+                                             }}
+                                             className="mt-2.5 p-3 rounded-2xl bg-card/90 border border-primary/30 hover:border-primary cursor-pointer transition-all shadow-md flex items-center justify-between gap-3 group/post hover:bg-card text-foreground"
+                                           >
+                                             <div className="flex items-center gap-2.5 min-w-0">
+                                               <div className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+                                                 <Share2 className="w-4 h-4" />
+                                               </div>
+                                               <div className="min-w-0">
+                                                 <span className="text-xs font-bold text-foreground block truncate">EduNexus Post #{postId}</span>
+                                                 <span className="text-[10px] text-muted-foreground block truncate">Tap to open full post & comments</span>
+                                               </div>
+                                             </div>
+                                             <span className="text-[11px] font-bold text-primary px-2.5 py-1 rounded-xl bg-primary/10 shrink-0 group-hover/post:bg-primary group-hover/post:text-primary-foreground transition-all">
+                                               Open →
+                                             </span>
+                                           </div>
+                                         );
+                                       }
+                                       return null;
+                                     })()}
+                                   </>
                                 )
                               ) : null}
                             </div>

@@ -9,8 +9,9 @@ import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/te
 import type { User, Post } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Edit3, Share2, UserCheck, UserPlus, Clock, Check, Bell } from 'lucide-react';
+import { Edit3, Share2, UserCheck, UserPlus, Clock, Check, Bell, Heart, MessageSquare } from 'lucide-react';
 import { FollowListModal } from '../../components/FollowListModal';
+import { SharePostModal } from '../../components/SharePostModal';
 
 export const ProfilePage: React.FC = () => {
   const { username } = useParams<{ username: string }>();
@@ -23,6 +24,7 @@ export const ProfilePage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'posts' | 'saved'>('posts');
   const [uploading, setUploading] = useState(false);
   const [showShareProfile, setShowShareProfile] = useState(false);
+  const [sharingPost, setSharingPost] = useState<Post | null>(null);
   const [profileChats, setProfileChats] = useState<any[]>([]);
   const [profileShareError, setProfileShareError] = useState('');
   const [selectedProfileChats, setSelectedProfileChats] = useState<any[]>([]);
@@ -464,6 +466,36 @@ export const ProfilePage: React.FC = () => {
                       </div>
                     )
                   )}
+
+                  {/* Post Action Footer */}
+                  <div className="pt-2.5 border-t border-border/60 flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1">
+                        <Heart className="w-3.5 h-3.5" />
+                        {post.likes_count || 0}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        {post.comments_count || 0}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSharingPost(post)}
+                        className="px-2.5 py-1 rounded-lg hover:bg-secondary text-foreground font-semibold flex items-center gap-1 transition-colors"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>Share</span>
+                      </button>
+                      <button
+                        onClick={() => navigate(`/app/posts/${post.id}`)}
+                        className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary font-bold hover:bg-primary/20 transition-colors"
+                      >
+                        View Post →
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -641,6 +673,13 @@ export const ProfilePage: React.FC = () => {
             onStatsChange={fetchProfile}
           />
         )}
+
+        {/* Share Post Modal */}
+        <SharePostModal
+          isOpen={!!sharingPost}
+          onClose={() => setSharingPost(null)}
+          post={sharingPost}
+        />
       </div>
     </AppLayout>
   );

@@ -79,6 +79,10 @@ export const AppContent: React.FC = () => {
       <Route path="/reject-invitation" element={<RejectInvitationPage />} />
       <Route path="/u/:username" element={<PublicProfilePage />} />
       <Route path="/p/:id" element={<PublicPostPage />} />
+      <Route path="/post/:id" element={<PublicPostPage />} />
+      <Route path="/posts/:id" element={<PublicPostPage />} />
+      <Route path="/app/post/:id" element={<PublicPostPage />} />
+      <Route path="/app/posts/:id" element={<PublicPostPage />} />
 
       {/* Authenticated Application Shell Routes */}
       <Route path="/app" element={<Navigate to="/app/feed" replace />} />
