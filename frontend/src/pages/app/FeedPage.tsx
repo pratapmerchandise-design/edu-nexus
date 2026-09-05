@@ -8,6 +8,7 @@ import { SpotlightCard } from '../../components/reactbits/SpotlightCard';
 import { AuroraGlow } from '../../components/reactbits/AuroraGlow';
 import type { Post, Comment } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/textUtils';
 import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, Send, FileText, GraduationCap, Check } from 'lucide-react';
 import { GifPicker } from '../../components/GifPicker';
@@ -16,6 +17,7 @@ import { InlineComments } from '../../components/InlineComments';
 
 export const FeedPage: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<string>('ALL');
@@ -420,17 +422,27 @@ export const FeedPage: React.FC = () => {
                   {/* Author row */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <UserAvatar
-                        src={post.author_avatar}
-                        username={post.author_username}
-                        membership={post.author_membership}
-                        size={42}
-                      />
+                      <div 
+                        onClick={() => navigate(`/app/profile/${post.author_username}`)}
+                        className="cursor-pointer"
+                        title={`View @${post.author_username}'s profile`}
+                      >
+                        <UserAvatar
+                          src={post.author_avatar}
+                          username={post.author_username}
+                          membership={post.author_membership}
+                          size={42}
+                        />
+                      </div>
                       <div className="space-y-0.5">
-                        <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                          {post.author_name}
+                        <h4 
+                          onClick={() => navigate(`/app/profile/${post.author_username}`)}
+                          className="text-sm font-bold text-foreground flex items-center gap-1.5 cursor-pointer group"
+                          title={`View @${post.author_username}'s profile`}
+                        >
+                          <span className="group-hover:underline group-hover:text-primary transition-colors">{post.author_name}</span>
                           <MembershipBadge membership={post.author_membership} size={14} />
-                          <span className="text-xs text-primary font-medium">@{post.author_username}</span>
+                          <span className="text-xs text-primary font-medium group-hover:underline">@{post.author_username}</span>
                         </h4>
                         <p className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap">
                           <span>

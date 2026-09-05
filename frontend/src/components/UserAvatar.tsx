@@ -57,11 +57,12 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
 
   // Ring padding based on avatar size
   const ringPadding = size >= 64 ? 3.5 : size >= 40 ? 2.5 : 2;
+  const cursorClass = onClick ? 'cursor-pointer hover:opacity-85 hover:scale-[1.03] transition-all' : '';
 
   if (isMember && ring) {
     return (
       <div
-        className={`relative inline-flex items-center justify-center shrink-0 group ${className}`}
+        className={`relative inline-flex items-center justify-center shrink-0 group ${cursorClass} ${className}`}
         style={{ width: size, height: size }}
         onClick={onClick}
         title={title || username}
@@ -104,7 +105,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   // Standard Non-Member Avatar
   return (
     <div
-      className={`relative inline-flex items-center justify-center shrink-0 rounded-full overflow-hidden border border-border bg-secondary ${className}`}
+      className={`relative inline-flex items-center justify-center shrink-0 rounded-full overflow-hidden border border-border bg-secondary ${cursorClass} ${className}`}
       style={{ width: size, height: size }}
       onClick={onClick}
       title={title || username}

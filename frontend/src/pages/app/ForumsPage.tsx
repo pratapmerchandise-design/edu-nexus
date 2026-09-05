@@ -4,8 +4,10 @@ import { api } from '../../services/api';
 import type { ForumCategory, ForumThread, ForumReply } from '../../types';
 import { MessageSquare, ThumbsUp, ThumbsDown, Plus, UserX } from 'lucide-react';
 import { MembershipBadge } from '../../components/MembershipBadge';
+import { useNavigate } from 'react-router-dom';
 
 export const ForumsPage: React.FC = () => {
+  const navigate = useNavigate();
   const [categories, setCategories] = useState<ForumCategory[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<number | null>(null);
   const [threads, setThreads] = useState<ForumThread[]>([]);
@@ -202,7 +204,11 @@ export const ForumsPage: React.FC = () => {
                         <UserX className="w-3 h-3 text-primary" /> Anonymous Student
                       </span>
                     ) : (
-                      <span className="text-[10px] font-semibold text-foreground/90 flex items-center gap-1">
+                      <span 
+                        onClick={(e) => { e.stopPropagation(); navigate(`/app/profile/${t.author_username}`); }}
+                        className="text-[10px] font-semibold text-foreground/90 flex items-center gap-1 cursor-pointer hover:underline hover:text-primary transition-colors"
+                        title={`View @${t.author_username}'s profile`}
+                      >
                         @{t.author_username}
                         <MembershipBadge membership={t.author_membership} size={12} />
                       </span>
@@ -341,7 +347,20 @@ export const ForumsPage: React.FC = () => {
               <div className="bg-secondary p-4 rounded-xl border border-border">
                 <p className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">{activeThread.content}</p>
                 <div className="mt-3 text-[10px] text-muted-foreground flex items-center justify-between">
-                  <span>Posted by: {activeThread.is_anonymous ? 'Anonymous Student' : `@${activeThread.author_username}`}</span>
+                  <span>
+                    Posted by:{' '}
+                    {activeThread.is_anonymous ? (
+                      'Anonymous Student'
+                    ) : (
+                      <span
+                        onClick={() => navigate(`/app/profile/${activeThread.author_username}`)}
+                        className="font-bold text-primary hover:underline cursor-pointer"
+                        title={`View @${activeThread.author_username}'s profile`}
+                      >
+                        @{activeThread.author_username}
+                      </span>
+                    )}
+                  </span>
                   <span>{new Date(activeThread.created_at).toLocaleDateString()}</span>
                 </div>
               </div>
@@ -355,7 +374,11 @@ export const ForumsPage: React.FC = () => {
                   replies.map((r) => (
                     <div key={r.id} className="bg-secondary p-3 rounded-xl border border-border space-y-1">
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-bold text-primary">
+                        <span 
+                          onClick={() => !r.is_anonymous && navigate(`/app/profile/${r.author_username}`)}
+                          className={`font-bold text-primary ${!r.is_anonymous ? 'hover:underline cursor-pointer' : ''}`}
+                          title={!r.is_anonymous ? `View @${r.author_username}'s profile` : undefined}
+                        >
                           {r.is_anonymous ? 'Anonymous Student' : `@${r.author_username}`}
                         </span>
                         <span className="text-[9px] text-muted-foreground">{new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>

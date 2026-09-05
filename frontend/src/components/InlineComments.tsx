@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Heart, MessageSquare, Send, X, ChevronDown, ChevronUp, CornerDownRight, Sparkles, Lock, Users } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { MembershipBadge } from './MembershipBadge';
@@ -29,6 +30,7 @@ export const InlineComments: React.FC<InlineCommentsProps> = ({
   onLikeComment,
   canReply,
 }) => {
+  const navigate = useNavigate();
   const [expandedReplies, setExpandedReplies] = useState<Record<number, boolean>>({});
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const formRef = React.useRef<HTMLFormElement>(null);
@@ -67,14 +69,31 @@ export const InlineComments: React.FC<InlineCommentsProps> = ({
             return (
               <div key={c.id} className="space-y-2">
                 <div className="flex items-start gap-2.5">
-                  <UserAvatar src={c.author_avatar} username={c.author_username} membership={c.author_membership} size={30} />
+                  <UserAvatar
+                    src={c.author_avatar}
+                    username={c.author_username}
+                    membership={c.author_membership}
+                    size={30}
+                    onClick={() => navigate(`/app/profile/${c.author_username}`)}
+                    title={`View @${c.author_username}'s profile`}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-bold text-foreground hover:underline cursor-pointer flex items-center gap-1.5">
+                      <span 
+                        onClick={() => navigate(`/app/profile/${c.author_username}`)}
+                        className="text-xs font-bold text-foreground hover:underline hover:text-primary cursor-pointer flex items-center gap-1.5 transition-colors"
+                        title={`View @${c.author_username}'s profile`}
+                      >
                         {c.author_name || c.author_username}
                         <MembershipBadge membership={c.author_membership} size={12} />
                       </span>
-                      <span className="text-[10px] text-muted-foreground">@{c.author_username}</span>
+                      <span 
+                        onClick={() => navigate(`/app/profile/${c.author_username}`)}
+                        className="text-[10px] text-muted-foreground hover:text-primary cursor-pointer hover:underline transition-colors"
+                        title={`View @${c.author_username}'s profile`}
+                      >
+                        @{c.author_username}
+                      </span>
                       <span className="text-[10px] text-muted-foreground">• {timeAgo(c.created_at)}</span>
                     </div>
                     {isStickerOnlyContent(c.content) ? (
@@ -126,14 +145,31 @@ export const InlineComments: React.FC<InlineCommentsProps> = ({
                           <div className="mt-2 pl-3 space-y-2.5 border-l-2 border-border/80 ml-1">
                             {c.replies.map((reply) => (
                               <div key={reply.id} className="flex items-start gap-2">
-                                <UserAvatar src={reply.author_avatar} username={reply.author_username} membership={reply.author_membership} size={24} />
+                                <UserAvatar
+                                  src={reply.author_avatar}
+                                  username={reply.author_username}
+                                  membership={reply.author_membership}
+                                  size={24}
+                                  onClick={() => navigate(`/app/profile/${reply.author_username}`)}
+                                  title={`View @${reply.author_username}'s profile`}
+                                />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[11px] font-bold text-foreground hover:underline cursor-pointer flex items-center gap-1.5">
+                                    <span 
+                                      onClick={() => navigate(`/app/profile/${reply.author_username}`)}
+                                      className="text-[11px] font-bold text-foreground hover:underline hover:text-primary cursor-pointer flex items-center gap-1.5 transition-colors"
+                                      title={`View @${reply.author_username}'s profile`}
+                                    >
                                       {reply.author_name || reply.author_username}
                                       <MembershipBadge membership={reply.author_membership} size={11} />
                                     </span>
-                                    <span className="text-[9px] text-muted-foreground">@{reply.author_username}</span>
+                                    <span 
+                                      onClick={() => navigate(`/app/profile/${reply.author_username}`)}
+                                      className="text-[9px] text-muted-foreground hover:text-primary cursor-pointer hover:underline transition-colors"
+                                      title={`View @${reply.author_username}'s profile`}
+                                    >
+                                      @{reply.author_username}
+                                    </span>
                                     <span className="text-[9px] text-muted-foreground">• {timeAgo(reply.created_at)}</span>
                                   </div>
                                   {isStickerOnlyContent(reply.content) ? (
