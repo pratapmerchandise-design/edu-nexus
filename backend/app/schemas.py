@@ -524,6 +524,16 @@ class SchoolOut(SchoolBase):
         from_attributes = True
 
 
+class SchoolUpdate(BaseModel):
+    name: Optional[str] = None
+    district: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    verified: Optional[bool] = None
+
+
 class SchoolMemberBase(BaseModel):
     role: str
 

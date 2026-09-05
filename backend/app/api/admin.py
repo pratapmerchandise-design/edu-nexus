@@ -352,3 +352,61 @@ def delete_school_admin_invite(
     db.commit()
     return {"message": "Invitation cancelled and removed."}
 
+
+@router.get("/admin/school-admins")
+def list_active_school_admins(
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """List all users who currently have the school admin role across all schools."""
+    admin_members = db.query(models.SchoolMember).filter(
+        models.SchoolMember.role == 'admin'
+    ).all()
+    out = []
+    for m in admin_members:
+        user = m.user
+        school = m.school
+        if user and school:
+            out.append({
+                "member_id": m.id,
+                "school_id": school.id,
+                "school_name": school.name,
+                "user_id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.profile.full_name if user.profile and user.profile.full_name else user.username,
+                "assigned_at": m.created_at.isoformat() if m.created_at else None,
+                "joined_at": m.created_at.isoformat() if m.created_at else None
+            })
+    return out
+
+
+@router.post("/admin/school-admins/{school_id}/{user_id}/revoke")
+def revoke_school_admin_from_panel(
+    school_id: int,
+    user_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Platform Admin revokes school admin privileges for a user."""
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == user_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="School member not found")
+
+    member.role = 'student'
+
+    # Mark any invitations as revoked
+    invites = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.school_id == school_id,
+        models.SchoolInvitation.user_id == user_id
+    ).all()
+    for inv in invites:
+        inv.status = 'revoked'
+
+    db.commit()
+    return {"message": "School admin role revoked successfully. User demoted to student."}
+
+

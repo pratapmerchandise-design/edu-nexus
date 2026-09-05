@@ -4,7 +4,7 @@ import { api } from '../../services/api';
 import type { User, ReportItem } from '../../types';
 import {
   Shield, Users, Flag, Plus, Mail, Building2, Send, RefreshCw,
-  Trash2, Clock, CheckCircle2, XCircle, Search, AlertCircle, X, Loader2
+  Trash2, Clock, CheckCircle2, XCircle, Search, AlertCircle, X, Loader2, ShieldOff
 } from 'lucide-react';
 import { SchoolAutocompleteInput } from '../../components/SchoolAutocompleteInput';
 import { timeAgo } from '../../utils/textUtils';
@@ -15,6 +15,7 @@ export const AdminPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [schoolInvites, setSchoolInvites] = useState<any[]>([]);
+  const [activeAdmins, setActiveAdmins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // School Admin Invites Filters & Modals
@@ -28,6 +29,7 @@ export const AdminPage: React.FC = () => {
   const [sendingInvite, setSendingInvite] = useState(false);
   const [resendingId, setResendingId] = useState<number | null>(null);
   const [cancelingId, setCancelingId] = useState<number | null>(null);
+  const [revokingAdminId, setRevokingAdminId] = useState<number | null>(null);
 
   // Opportunity Creation Form
   const [showAddOppModal, setShowAddOppModal] = useState(false);
@@ -51,8 +53,12 @@ export const AdminPage: React.FC = () => {
         const rList = await api.get<ReportItem[]>('/admin/reports');
         setReports(rList || []);
       } else if (activeTab === 'school_invites') {
-        const iList = await api.get<any[]>('/admin/school-invites');
+        const [iList, aList] = await Promise.all([
+          api.get<any[]>('/admin/school-invites'),
+          api.get<any[]>('/admin/school-admins').catch(() => [])
+        ]);
         setSchoolInvites(iList || []);
+        setActiveAdmins(aList || []);
       }
     } catch (e) {
       console.error(e);
@@ -64,6 +70,25 @@ export const AdminPage: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [activeTab]);
+
+  const handleRevokeActiveSchoolAdmin = async (adminObj: any) => {
+    if (!window.confirm(`Are you sure you want to remove @${adminObj.username} as School Administrator for ${adminObj.school_name}?`)) {
+      return;
+    }
+    setRevokingAdminId(adminObj.user_id);
+    try {
+      await api.post(`/admin/school-admins/${adminObj.school_id}/${adminObj.user_id}/revoke`);
+      setActiveAdmins((prev) =>
+        prev.filter((a) => !(a.school_id === adminObj.school_id && a.user_id === adminObj.user_id))
+      );
+      alert(`School Administrator role removed for @${adminObj.username}.`);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.response?.data?.detail || 'Failed to revoke school admin role.');
+    } finally {
+      setRevokingAdminId(null);
+    }
+  };
 
   const handleSendSchoolInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -509,6 +534,107 @@ export const AdminPage: React.FC = () => {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Active School Administrators Table */}
+            <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm mt-6">
+              <div className="p-5 border-b border-border flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">Active School Administrators</h3>
+                    <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-extrabold">
+                      {activeAdmins.length} Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Campus admins currently managing their school hubs. You can revoke their admin privileges at any time.
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-foreground/90">
+                  <thead className="bg-secondary text-primary uppercase font-bold text-[10px] tracking-wider border-b border-border">
+                    <tr>
+                      <th className="p-4">Administrator</th>
+                      <th className="p-4">Assigned Campus</th>
+                      <th className="p-4">Role</th>
+                      <th className="p-4">Assigned Since</th>
+                      <th className="p-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {activeAdmins.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                          No active school administrators found across registered campuses.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeAdmins.map((adm) => (
+                        <tr key={`${adm.school_id}-${adm.user_id}`} className="hover:bg-secondary/40 transition-colors">
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              {adm.avatar_url ? (
+                                <img
+                                  src={adm.avatar_url}
+                                  alt={adm.username}
+                                  className="w-8 h-8 rounded-full object-cover border border-border shrink-0"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs uppercase border border-primary/20 shrink-0">
+                                  {adm.full_name?.[0] || adm.username?.[0] || 'A'}
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-bold text-foreground">{adm.full_name || adm.username}</div>
+                                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                                  <span>@{adm.username}</span>
+                                  {adm.email && (
+                                    <>
+                                      <span>•</span>
+                                      <span>{adm.email}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="font-bold flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-primary shrink-0" />
+                              <span className="truncate max-w-[200px]">{adm.school_name || `School #${adm.school_id}`}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-extrabold uppercase whitespace-nowrap">
+                              Campus Admin
+                            </span>
+                          </td>
+                          <td className="p-4 text-muted-foreground text-[11px] whitespace-nowrap">
+                            {adm.joined_at ? (
+                              <div>{new Date(adm.joined_at).toLocaleDateString()}</div>
+                            ) : (
+                              <div>—</div>
+                            )}
+                          </td>
+                          <td className="p-4 text-right whitespace-nowrap">
+                            <button
+                              onClick={() => handleRevokeActiveSchoolAdmin(adm)}
+                              disabled={revokingAdminId === adm.user_id}
+                              title="Revoke school admin privileges and demote to regular student"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive hover:text-white transition-all text-xs font-semibold cursor-pointer disabled:opacity-50"
+                            >
+                              <ShieldOff className="w-3.5 h-3.5" />
+                              <span>{revokingAdminId === adm.user_id ? 'Removing...' : 'Remove as Admin'}</span>
+                            </button>
                           </td>
                         </tr>
                       ))

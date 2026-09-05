@@ -707,6 +707,44 @@ def get_school_details(
     return school
 
 
+@router.put("/{school_id}", response_model=schemas.SchoolOut)
+def update_school_info(
+    school_id: int,
+    data: schemas.SchoolUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Update school details. Strictly restricted to Platform Admins ONLY. School admins cannot change school info."""
+    if current_user.role != 'admin':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Only EduNexus Platform Admins can modify school information. School administrators are not permitted to change school details."
+        )
+
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    if data.name is not None and data.name.strip():
+        school.name = data.name.strip()
+    if data.district is not None:
+        school.district = data.district.strip() if data.district else None
+    if data.address is not None:
+        school.address = data.address.strip() if data.address else None
+    if data.city is not None:
+        school.city = data.city.strip() if data.city else None
+    if data.state is not None:
+        school.state = data.state.strip() if data.state else None
+    if data.country is not None:
+        school.country = data.country.strip() if data.country else "India"
+    if data.verified is not None:
+        school.verified = data.verified
+
+    db.commit()
+    db.refresh(school)
+    return school
+
+
 @router.get("/{school_id}/members", response_model=List[schemas.SchoolMemberOut])
 def get_school_members(
     school_id: int,
@@ -1306,8 +1344,8 @@ def set_member_role(
     if member.role == 'admin' and user_id != current_user.id and current_user.role != 'admin':
         raise HTTPException(status_code=403, detail="School admins cannot change another school admin's role")
 
-    # Prevent removing the last admin
-    if member.role == 'admin' and data.role != 'admin':
+    # Prevent removing the last admin (unless performed by Platform Admin)
+    if member.role == 'admin' and data.role != 'admin' and current_user.role != 'admin':
         admin_count = db.query(models.SchoolMember).filter(
             models.SchoolMember.school_id == school_id,
             models.SchoolMember.role == 'admin'
@@ -1332,6 +1370,42 @@ def set_member_role(
             raise HTTPException(status_code=400, detail="This school already has the maximum of 3 admins. Ask the EduNexus Platform Admin for additional admin access.")
 
     member.role = role_name
+    db.commit()
+    db.refresh(member)
+    return member
+
+
+@router.post("/{school_id}/members/{user_id}/revoke-admin", response_model=schemas.SchoolMemberOut)
+def revoke_school_admin_role(
+    school_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Revoke school admin status from a user. Only Platform Admins can remove school admins."""
+    if current_user.role != 'admin':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Only EduNexus Platform Admins can revoke School Administrator access."
+        )
+
+    member = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id,
+        models.SchoolMember.user_id == user_id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="School member not found")
+
+    member.role = 'student'
+
+    # Mark any invitations for this user and school as revoked
+    invites = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.school_id == school_id,
+        models.SchoolInvitation.user_id == user_id
+    ).all()
+    for inv in invites:
+        inv.status = 'revoked'
+
     db.commit()
     db.refresh(member)
     return member
@@ -1376,7 +1450,7 @@ def remove_member(
     if member.role == 'admin' and current_user.role != 'admin':
         raise HTTPException(status_code=403, detail="School admins cannot remove another school admin")
 
-    if member.role == 'admin':
+    if member.role == 'admin' and current_user.role != 'admin':
         admin_count = db.query(models.SchoolMember).filter(
             models.SchoolMember.school_id == school_id,
             models.SchoolMember.role == 'admin'
