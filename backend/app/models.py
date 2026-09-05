@@ -110,7 +110,11 @@ class Follow(Base):
 
     follower_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
     followed_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    status = Column(String(20), default='pending', nullable=False) # 'pending', 'accepted'
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    follower = relationship('User', foreign_keys=[follower_id], backref='following_relations')
+    followed = relationship('User', foreign_keys=[followed_id], backref='follower_relations')
 
 class Post(Base):
     __tablename__ = 'posts'

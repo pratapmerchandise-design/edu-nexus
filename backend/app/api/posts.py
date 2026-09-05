@@ -149,7 +149,7 @@ def get_feed(
     # Audience visibility: hide posts the current user isn't allowed to see.
     # Free posts are always public; member posts may be 'followers' or a school 'community'.
     following_ids = {
-        f.followed_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id).all()
+        f.followed_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id, Follow.status == 'accepted').all()
     }
     user_school_ids = {
         m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).all()
@@ -187,7 +187,7 @@ def get_feed(
         user_interests = {i.name for i in current_user.interests}
         user_skills = {s.name for s in current_user.skills}
         following_ids = {
-            f.followed_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id).all()
+            f.followed_id for f in db.query(Follow).filter(Follow.follower_id == current_user.id, Follow.status == 'accepted').all()
         }
 
         # Preload membership boosts for all candidate authors (avoid N+1)
@@ -418,7 +418,8 @@ def add_comment(post_id: int, data: CommentCreate, current_user: User = Depends(
             if not allowed and "followers" in privacy_set:
                 is_follower = db.query(Follow).filter(
                     Follow.follower_id == current_user.id,
-                    Follow.followed_id == post.author_id
+                    Follow.followed_id == post.author_id,
+                    Follow.status == 'accepted'
                 ).first() is not None
                 if is_follower:
                     allowed = True

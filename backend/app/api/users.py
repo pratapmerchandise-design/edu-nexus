@@ -19,6 +19,21 @@ def get_public_profile(username: str, db: Session = Depends(get_db), current_use
     posts = db.query(Post).filter(Post.author_id == target.id, Post.is_deleted == False, Post.audience == 'public').order_by(Post.created_at.desc()).limit(12).all()
     return {"profile": profile, "posts": [{"id": p.id, "content": p.content, "title": p.title, "image_url": p.image_url, "created_at": p.created_at, "post_type": p.post_type} for p in posts]}
 
+@router.get("/follow-requests/pending")
+def get_pending_follow_requests(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    requests = db.query(Follow).filter(
+        Follow.followed_id == current_user.id,
+        Follow.status == 'pending'
+    ).order_by(Follow.created_at.desc()).all()
+
+    requester_ids = [r.follower_id for r in requests]
+    if not requester_ids:
+        return []
+
+    users = db.query(User).filter(User.id.in_(requester_ids)).all()
+    user_map = {u.id: u for u in users}
+    return [format_user_out(user_map[rid], current_user.id, db) for rid in requester_ids if rid in user_map]
+
 @router.get("/{username}")
 def get_user_profile(username: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     target_user = db.query(User).filter(User.username == username.lower()).first()
@@ -104,6 +119,44 @@ def update_profile(data: ProfileUpdate, current_user: User = Depends(get_current
     db.refresh(current_user)
     return format_user_out(current_user, current_user.id, db)
 
+@router.get("/{username}/followers")
+def get_user_followers(username: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    target_user = db.query(User).filter(User.username == username.lower()).first()
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    records = db.query(Follow).filter(
+        Follow.followed_id == target_user.id,
+        Follow.status == 'accepted'
+    ).order_by(Follow.created_at.desc()).all()
+
+    follower_ids = [r.follower_id for r in records]
+    if not follower_ids:
+        return []
+
+    users = db.query(User).filter(User.id.in_(follower_ids)).all()
+    user_map = {u.id: u for u in users}
+    return [format_user_out(user_map[fid], current_user.id, db) for fid in follower_ids if fid in user_map]
+
+@router.get("/{username}/following")
+def get_user_following(username: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    target_user = db.query(User).filter(User.username == username.lower()).first()
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    records = db.query(Follow).filter(
+        Follow.follower_id == target_user.id,
+        Follow.status == 'accepted'
+    ).order_by(Follow.created_at.desc()).all()
+
+    following_ids = [r.followed_id for r in records]
+    if not following_ids:
+        return []
+
+    users = db.query(User).filter(User.id.in_(following_ids)).all()
+    user_map = {u.id: u for u in users}
+    return [format_user_out(user_map[fid], current_user.id, db) for fid in following_ids if fid in user_map]
+
 @router.post("/{username}/follow")
 def follow_user(username: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     target_user = db.query(User).filter(User.username == username.lower()).first()
@@ -112,36 +165,35 @@ def follow_user(username: str, current_user: User = Depends(get_current_user), d
     if target_user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot follow yourself")
 
-    existing = db.query(Follow).filter(Follow.follower_id == current_user.id, Follow.followed_id == target_user.id).first()
-    if not existing:
-        follow_record = Follow(follower_id=current_user.id, followed_id=target_user.id)
-        db.add(follow_record)
+    existing = db.query(Follow).filter(
+        Follow.follower_id == current_user.id,
+        Follow.followed_id == target_user.id
+    ).first()
 
-        # Notification
-        notif = Notification(
-            recipient_id=target_user.id,
-            sender_id=current_user.id,
-            type="follow",
-            title="New Follower",
-            body=f"{current_user.profile.full_name if current_user.profile else current_user.username} started following you.",
-            link=f"/app/profile/{current_user.username}"
-        )
-        db.add(notif)
+    if existing:
+        if existing.status == 'accepted':
+            return {"message": "Already following", "is_following": True, "follow_status": "accepted"}
+        else:
+            return {"message": "Follow request already sent", "is_following": False, "follow_status": "pending"}
 
-        # If now mutual followers, auto-accept any pending direct message conversation
-        reverse_follow = db.query(Follow).filter(Follow.follower_id == target_user.id, Follow.followed_id == current_user.id).first()
-        if reverse_follow:
-            my_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == current_user.id).all()]
-            target_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == target_user.id).all()]
-            common_ids = set(my_conv_ids).intersection(set(target_conv_ids))
-            for cid in common_ids:
-                conv = db.query(Conversation).filter(Conversation.id == cid, Conversation.is_group == False).first()
-                if conv and conv.status == 'pending':
-                    conv.status = 'accepted'
+    # Create follow request with pending status
+    follow_record = Follow(follower_id=current_user.id, followed_id=target_user.id, status='pending')
+    db.add(follow_record)
 
-        db.commit()
+    # Notification
+    sender_name = current_user.profile.full_name if current_user.profile and current_user.profile.full_name else current_user.username
+    notif = Notification(
+        recipient_id=target_user.id,
+        sender_id=current_user.id,
+        type="follow_request",
+        title="Follow Request",
+        body=f"{sender_name} sent you a follow request.",
+        link=f"/app/profile/{current_user.username}"
+    )
+    db.add(notif)
+    db.commit()
 
-    return {"message": "Followed successfully", "is_following": True}
+    return {"message": "Follow request sent", "is_following": False, "follow_status": "pending"}
 
 @router.delete("/{username}/follow")
 def unfollow_user(username: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -149,12 +201,114 @@ def unfollow_user(username: str, current_user: User = Depends(get_current_user),
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    existing = db.query(Follow).filter(Follow.follower_id == current_user.id, Follow.followed_id == target_user.id).first()
+    existing = db.query(Follow).filter(
+        Follow.follower_id == current_user.id,
+        Follow.followed_id == target_user.id
+    ).first()
+    if existing:
+        db.delete(existing)
+        # Delete pending follow_request notification if any
+        db.query(Notification).filter(
+            Notification.recipient_id == target_user.id,
+            Notification.sender_id == current_user.id,
+            Notification.type.in_(["follow", "follow_request"])
+        ).delete(synchronize_session=False)
+        db.commit()
+
+    return {"message": "Unfollowed or request cancelled successfully", "is_following": False, "follow_status": "none"}
+
+@router.post("/{username}/accept-follow")
+def accept_follow_request(username: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    requester = db.query(User).filter(User.username == username.lower()).first()
+    if not requester:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    req = db.query(Follow).filter(
+        Follow.follower_id == requester.id,
+        Follow.followed_id == current_user.id,
+        Follow.status == 'pending'
+    ).first()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Follow request not found")
+
+    req.status = 'accepted'
+
+    # Notify the requester that their request was accepted
+    sender_name = current_user.profile.full_name if current_user.profile and current_user.profile.full_name else current_user.username
+    notif = Notification(
+        recipient_id=requester.id,
+        sender_id=current_user.id,
+        type="follow_accepted",
+        title="Follow Request Accepted",
+        body=f"{sender_name} accepted your follow request.",
+        link=f"/app/profile/{current_user.username}"
+    )
+    db.add(notif)
+
+    # Mark incoming follow_request notification as read
+    db.query(Notification).filter(
+        Notification.recipient_id == current_user.id,
+        Notification.sender_id == requester.id,
+        Notification.type == "follow_request"
+    ).update({"is_read": True})
+
+    # If now mutual followers, auto-accept any pending direct message conversation
+    reverse_follow = db.query(Follow).filter(
+        Follow.follower_id == current_user.id,
+        Follow.followed_id == requester.id,
+        Follow.status == 'accepted'
+    ).first()
+    if reverse_follow:
+        my_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == current_user.id).all()]
+        target_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == requester.id).all()]
+        common_ids = set(my_conv_ids).intersection(set(target_conv_ids))
+        for cid in common_ids:
+            conv = db.query(Conversation).filter(Conversation.id == cid, Conversation.is_group == False).first()
+            if conv and conv.status == 'pending':
+                conv.status = 'accepted'
+
+    db.commit()
+    return {"message": "Follow request accepted", "success": True, "follow_status": "accepted"}
+
+@router.post("/{username}/reject-follow")
+def reject_follow_request(username: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    requester = db.query(User).filter(User.username == username.lower()).first()
+    if not requester:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    req = db.query(Follow).filter(
+        Follow.follower_id == requester.id,
+        Follow.followed_id == current_user.id,
+        Follow.status == 'pending'
+    ).first()
+    if req:
+        db.delete(req)
+
+    # Mark incoming follow_request notification as read
+    db.query(Notification).filter(
+        Notification.recipient_id == current_user.id,
+        Notification.sender_id == requester.id,
+        Notification.type == "follow_request"
+    ).update({"is_read": True})
+
+    db.commit()
+    return {"message": "Follow request rejected", "success": True}
+
+@router.delete("/{username}/remove-follower")
+def remove_follower(username: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    target_user = db.query(User).filter(User.username == username.lower()).first()
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    existing = db.query(Follow).filter(
+        Follow.follower_id == target_user.id,
+        Follow.followed_id == current_user.id
+    ).first()
     if existing:
         db.delete(existing)
         db.commit()
 
-    return {"message": "Unfollowed successfully", "is_following": False}
+    return {"message": "Follower removed successfully", "success": True}
 
 @router.delete("/me")
 def delete_my_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):

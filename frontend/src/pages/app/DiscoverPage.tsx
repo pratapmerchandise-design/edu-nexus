@@ -6,7 +6,7 @@ import { UserAvatar } from '../../components/UserAvatar';
 import { renderContentWithHighlights, timeAgo } from '../../utils/textUtils';
 import type { User, Post } from '../../types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { Search, UserCheck, UserPlus, Clock } from 'lucide-react';
 
 export const DiscoverPage: React.FC = () => {
   const navigate = useNavigate();
@@ -57,14 +57,23 @@ export const DiscoverPage: React.FC = () => {
     }
   }, [activeTab, query]);
 
-  const handleFollowToggle = async (username: string, currentStatus?: boolean) => {
+  const handleFollowToggle = async (username: string, followStatus?: string, isFollowing?: boolean) => {
+    const current = followStatus || (isFollowing ? 'accepted' : 'none');
     try {
-      if (currentStatus) {
-        await api.delete(`/users/${username}/follow`);
+      if (current === 'accepted') {
+        if (confirm(`Unfollow @${username}?`)) {
+          await api.delete(`/users/${username}/follow`);
+          fetchStudents();
+        }
+      } else if (current === 'pending') {
+        if (confirm(`Cancel follow request sent to @${username}?`)) {
+          await api.delete(`/users/${username}/follow`);
+          fetchStudents();
+        }
       } else {
         await api.post(`/users/${username}/follow`);
+        fetchStudents();
       }
-      fetchStudents();
     } catch (e) {
       console.error(e);
     }
@@ -177,16 +186,39 @@ export const DiscoverPage: React.FC = () => {
                   </div>
 
                   <div className="pt-3 border-t border-border flex items-center gap-2">
-                    <button
-                      onClick={() => handleFollowToggle(student.username, student.is_following)}
-                      className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
-                        student.is_following
-                          ? 'bg-secondary text-muted-foreground border border-border'
-                          : 'bg-primary text-primary-foreground hover:bg-secondary'
-                      }`}
-                    >
-                      {student.is_following ? 'Following' : 'Follow'}
-                    </button>
+                    {(() => {
+                      const status = student.follow_status || (student.is_following ? 'accepted' : 'none');
+                      if (status === 'accepted') {
+                        return (
+                          <button
+                            onClick={() => handleFollowToggle(student.username, student.follow_status, student.is_following)}
+                            className="flex-1 py-2 rounded-xl text-xs font-bold bg-secondary text-muted-foreground border border-border hover:text-red-400 hover:border-red-500/40 transition-all flex items-center justify-center gap-1.5"
+                            title="Click to unfollow"
+                          >
+                            <UserCheck className="w-3.5 h-3.5 text-primary" /> Following
+                          </button>
+                        );
+                      }
+                      if (status === 'pending') {
+                        return (
+                          <button
+                            onClick={() => handleFollowToggle(student.username, student.follow_status, student.is_following)}
+                            className="flex-1 py-2 rounded-xl text-xs font-bold bg-secondary border border-primary/40 text-primary hover:bg-primary/10 transition-all flex items-center justify-center gap-1.5"
+                            title="Click to cancel follow request"
+                          >
+                            <Clock className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '3s' }} /> Requested
+                          </button>
+                        );
+                      }
+                      return (
+                        <button
+                          onClick={() => handleFollowToggle(student.username, student.follow_status, student.is_following)}
+                          className="flex-1 py-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:brightness-110 transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                        >
+                          <UserPlus className="w-3.5 h-3.5" /> Follow
+                        </button>
+                      );
+                    })()}
                     <button
                       onClick={() => handleStartMessage(student.username)}
                       className="px-3 py-2 rounded-xl bg-transparent border border-border text-xs text-muted-foreground font-bold hover:border-primary"

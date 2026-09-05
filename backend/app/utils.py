@@ -27,15 +27,44 @@ def format_user_out(user: User, current_user_id: int | None = None, db: Session 
     followers_count = 0
     following_count = 0
     is_following = False
+    follow_status = "none" # "none" | "pending" | "accepted"
+    has_pending_request_from = False
+    pending_requests_count = 0
 
     if db:
-        followers_count = db.query(Follow).filter(Follow.followed_id == user.id).count()
-        following_count = db.query(Follow).filter(Follow.follower_id == user.id).count()
-        if current_user_id and current_user_id != user.id:
-            is_following = db.query(Follow).filter(
-                Follow.follower_id == current_user_id,
-                Follow.followed_id == user.id
-            ).first() is not None
+        followers_count = db.query(Follow).filter(
+            Follow.followed_id == user.id,
+            Follow.status == 'accepted'
+        ).count()
+        following_count = db.query(Follow).filter(
+            Follow.follower_id == user.id,
+            Follow.status == 'accepted'
+        ).count()
+
+        if current_user_id:
+            if current_user_id == user.id:
+                # Own profile: count pending follow requests received
+                pending_requests_count = db.query(Follow).filter(
+                    Follow.followed_id == user.id,
+                    Follow.status == 'pending'
+                ).count()
+            else:
+                # Other user's profile: check relationship between current_user and target user
+                rel = db.query(Follow).filter(
+                    Follow.follower_id == current_user_id,
+                    Follow.followed_id == user.id
+                ).first()
+                if rel:
+                    follow_status = rel.status
+                    is_following = (rel.status == 'accepted')
+
+                # Check if target user has sent a follow request to current user
+                incoming = db.query(Follow).filter(
+                    Follow.follower_id == user.id,
+                    Follow.followed_id == current_user_id,
+                    Follow.status == 'pending'
+                ).first()
+                has_pending_request_from = (incoming is not None)
 
     is_self = current_user_id and current_user_id == user.id
 
@@ -75,5 +104,8 @@ def format_user_out(user: User, current_user_id: int | None = None, db: Session 
         "followers_count": followers_count,
         "following_count": following_count,
         "is_following": is_following,
+        "follow_status": follow_status,
+        "has_pending_request_from": has_pending_request_from,
+        "pending_requests_count": pending_requests_count,
         "membership": _membership_info(user, db),
     }

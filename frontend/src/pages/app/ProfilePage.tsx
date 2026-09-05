@@ -9,7 +9,8 @@ import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/te
 import type { User, Post } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Edit3, Share2 } from 'lucide-react';
+import { Edit3, Share2, UserCheck, UserPlus, Clock, Check, X, Bell } from 'lucide-react';
+import { FollowListModal } from '../../components/FollowListModal';
 
 export const ProfilePage: React.FC = () => {
   const { username } = useParams<{ username: string }>();
@@ -26,6 +27,10 @@ export const ProfilePage: React.FC = () => {
   const [profileShareError, setProfileShareError] = useState('');
   const [selectedProfileChats, setSelectedProfileChats] = useState<any[]>([]);
   const [sendingProfile, setSendingProfile] = useState(false);
+
+  // Follow Modal State
+  const [showFollowModal, setShowFollowModal] = useState(false);
+  const [followModalTab, setFollowModalTab] = useState<'followers' | 'following' | 'requests'>('followers');
 
   // Edit Profile Modal State
   const [showEditModal, setShowEditModal] = useState(false);
@@ -73,15 +78,44 @@ export const ProfilePage: React.FC = () => {
 
   const handleFollowToggle = async () => {
     if (!profileUser) return;
+    const status = profileUser.follow_status || (profileUser.is_following ? 'accepted' : 'none');
     try {
-      if (profileUser.is_following) {
-        await api.delete(`/users/${profileUser.username}/follow`);
+      if (status === 'accepted') {
+        if (confirm(`Unfollow @${profileUser.username}?`)) {
+          await api.delete(`/users/${profileUser.username}/follow`);
+          fetchProfile();
+        }
+      } else if (status === 'pending') {
+        if (confirm(`Cancel follow request sent to @${profileUser.username}?`)) {
+          await api.delete(`/users/${profileUser.username}/follow`);
+          fetchProfile();
+        }
       } else {
         await api.post(`/users/${profileUser.username}/follow`);
+        fetchProfile();
       }
-      fetchProfile();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleAcceptIncoming = async () => {
+    if (!profileUser) return;
+    try {
+      await api.post(`/users/${profileUser.username}/accept-follow`);
+      fetchProfile();
+    } catch (e: any) {
+      alert(e.message || 'Failed to accept follow request');
+    }
+  };
+
+  const handleRejectIncoming = async () => {
+    if (!profileUser) return;
+    try {
+      await api.post(`/users/${profileUser.username}/reject-follow`);
+      fetchProfile();
+    } catch (e: any) {
+      alert(e.message || 'Failed to reject follow request');
     }
   };
 
@@ -200,16 +234,30 @@ export const ProfilePage: React.FC = () => {
               </button>
             ) : (
               <div className="flex gap-2">
-                <button
-                  onClick={handleFollowToggle}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    profileUser.is_following
-                      ? 'bg-secondary text-muted-foreground border border-border'
-                      : 'bg-primary text-primary-foreground hover:bg-secondary'
-                  }`}
-                >
-                  {profileUser.is_following ? 'Following' : 'Follow'}
-                </button>
+                {profileUser.follow_status === 'accepted' || (profileUser.is_following && !profileUser.follow_status) ? (
+                  <button
+                    onClick={handleFollowToggle}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-secondary text-muted-foreground border border-border hover:text-red-400 hover:border-red-500/40 transition-all flex items-center gap-1.5"
+                    title="Click to unfollow"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-primary" /> Following
+                  </button>
+                ) : profileUser.follow_status === 'pending' ? (
+                  <button
+                    onClick={handleFollowToggle}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-secondary border border-primary/40 text-primary hover:bg-primary/10 transition-all flex items-center gap-1.5 shadow-sm"
+                    title="Click to cancel follow request"
+                  >
+                    <Clock className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '3s' }} /> Requested
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleFollowToggle}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:brightness-110 transition-all flex items-center gap-1.5 shadow-md"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" /> Follow
+                  </button>
+                )}
                 <button
                   onClick={handleStartMessage}
                   className="px-4 py-2 rounded-xl bg-secondary backdrop-blur-md border border-border text-xs font-bold text-foreground hover:border-primary"
@@ -219,6 +267,59 @@ export const ProfilePage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Pending Request Banner: Incoming from other user */}
+          {!isOwnProfile && profileUser.has_pending_request_from && (
+            <div className="mx-6 mt-4 p-3.5 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-xl bg-primary/20 text-primary shrink-0">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <p className="text-xs text-foreground font-semibold truncate">
+                  <strong className="text-primary font-bold">@{profileUser.username}</strong> requested to follow you.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={handleAcceptIncoming}
+                  className="px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 flex items-center gap-1 shadow-sm transition-all"
+                >
+                  <Check className="w-3.5 h-3.5" /> Confirm
+                </button>
+                <button
+                  onClick={handleRejectIncoming}
+                  className="px-2.5 py-1.5 rounded-xl bg-secondary border border-border text-xs font-bold text-muted-foreground hover:text-foreground transition-all"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Pending Requests Notice for Own Profile */}
+          {isOwnProfile && Boolean(profileUser.pending_requests_count && profileUser.pending_requests_count > 0) && (
+            <div
+              onClick={() => { setFollowModalTab('requests'); setShowFollowModal(true); }}
+              className="mx-6 mt-4 p-3.5 rounded-2xl bg-secondary/80 border border-primary/40 hover:border-primary cursor-pointer flex items-center justify-between gap-3 shadow-md transition-all group"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-primary text-primary-foreground font-bold shrink-0 animate-pulse">
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-foreground group-hover:text-primary transition-colors">
+                    Follow Requests ({profileUser.pending_requests_count})
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Students wanting to connect with you. Review and accept requests.
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-primary group-hover:translate-x-0.5 transition-transform flex items-center gap-1">
+                Review →
+              </span>
+            </div>
+          )}
 
           {/* Profile Info */}
           <div className="px-6 pb-6 pt-0 relative">
@@ -232,12 +333,18 @@ export const ProfilePage: React.FC = () => {
                 className="border-4 border-card bg-secondary shadow-xl z-20"
               />
               <div className="flex gap-6 text-center text-xs">
-                <div>
-                  <strong className="block text-base text-foreground">{profileUser.followers_count}</strong>
+                <div
+                  onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }}
+                  className="cursor-pointer group hover:opacity-80 transition-all"
+                >
+                  <strong className="block text-base text-foreground group-hover:text-primary transition-colors">{profileUser.followers_count}</strong>
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Followers</span>
                 </div>
-                <div>
-                  <strong className="block text-base text-foreground">{profileUser.following_count}</strong>
+                <div
+                  onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }}
+                  className="cursor-pointer group hover:opacity-80 transition-all"
+                >
+                  <strong className="block text-base text-foreground group-hover:text-primary transition-colors">{profileUser.following_count}</strong>
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Following</span>
                 </div>
                 <div 
@@ -521,6 +628,18 @@ export const ProfilePage: React.FC = () => {
               </form>
             </div>
           </div>
+        )}
+
+        {/* Follow / Following / Requests Modal */}
+        {showFollowModal && profileUser && (
+          <FollowListModal
+            isOpen={showFollowModal}
+            onClose={() => setShowFollowModal(false)}
+            initialTab={followModalTab}
+            username={profileUser.username}
+            isOwnProfile={Boolean(isOwnProfile)}
+            onStatsChange={fetchProfile}
+          />
         )}
       </div>
     </AppLayout>

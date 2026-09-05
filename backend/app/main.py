@@ -19,6 +19,12 @@ from backend.app.api import auth, users, posts, discover, forums, opportunities,
 # Create tables automatically
 Base.metadata.create_all(bind=engine)
 
+try:
+    from backend.migrate_follow_status import run as run_follow_migration
+    run_follow_migration()
+except Exception as e:
+    print(f"[Startup] Follow migration note: {e}")
+
 app = FastAPI(
     title="Edu Nexus V1 API",
     description="Student social + collaboration + opportunity platform backend API",

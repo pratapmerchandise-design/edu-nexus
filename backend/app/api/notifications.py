@@ -30,7 +30,9 @@ def get_notifications(
             "link": n.link,
             "is_read": n.is_read,
             "created_at": n.created_at,
-            "sender_avatar": sender_avatar
+            "sender_avatar": sender_avatar,
+            "sender_username": n.sender.username if n.sender else None,
+            "sender_id": n.sender_id
         })
     return res
 

@@ -163,8 +163,8 @@ def start_or_get_conversation(target_username: str, current_user: User = Depends
     target_conv_ids = [m.conversation_id for m in db.query(ConversationMember).filter(ConversationMember.user_id == target_user.id).all()]
 
     is_mutual_follow = (
-        db.query(Follow).filter(Follow.follower_id == current_user.id, Follow.followed_id == target_user.id).first() is not None and
-        db.query(Follow).filter(Follow.follower_id == target_user.id, Follow.followed_id == current_user.id).first() is not None
+        db.query(Follow).filter(Follow.follower_id == current_user.id, Follow.followed_id == target_user.id, Follow.status == 'accepted').first() is not None and
+        db.query(Follow).filter(Follow.follower_id == target_user.id, Follow.followed_id == current_user.id, Follow.status == 'accepted').first() is not None
     )
 
     common_ids = set(my_conv_ids).intersection(set(target_conv_ids))

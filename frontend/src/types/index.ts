@@ -41,6 +41,9 @@ export interface User {
   followers_count: number;
   following_count: number;
   is_following?: boolean;
+  follow_status?: 'none' | 'pending' | 'accepted';
+  has_pending_request_from?: boolean;
+  pending_requests_count?: number;
   membership?: MembershipInfo | null;
 }
 
@@ -249,6 +252,8 @@ export interface NotificationItem {
   is_read: boolean;
   created_at: string;
   sender_avatar?: string;
+  sender_username?: string;
+  sender_id?: number;
 }
 
 export interface ReportItem {

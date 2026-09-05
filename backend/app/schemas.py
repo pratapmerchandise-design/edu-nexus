@@ -66,6 +66,9 @@ class UserOut(BaseModel):
     followers_count: int = 0
     following_count: int = 0
     is_following: Optional[bool] = False
+    follow_status: Optional[str] = "none" # 'none', 'pending', 'accepted'
+    has_pending_request_from: Optional[bool] = False
+    pending_requests_count: Optional[int] = 0
     membership: Optional[dict] = None
 
     class Config:
@@ -405,6 +408,8 @@ class NotificationOut(BaseModel):
     is_read: bool
     created_at: datetime
     sender_avatar: Optional[str] = None
+    sender_username: Optional[str] = None
+    sender_id: Optional[int] = None
 
     class Config:
         from_attributes = True
