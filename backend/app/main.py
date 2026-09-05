@@ -25,6 +25,12 @@ try:
 except Exception as e:
     print(f"[Startup] Follow migration note: {e}")
 
+try:
+    from backend.migrate_reactions import run as run_reactions_migration
+    run_reactions_migration()
+except Exception as e:
+    print(f"[Startup] Reactions migration note: {e}")
+
 app = FastAPI(
     title="Edu Nexus V1 API",
     description="Student social + collaboration + opportunity platform backend API",

@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 import json
 
 from backend.app.database import get_db, SessionLocal
-from backend.app.models import Conversation, ConversationMember, Message, User, Notification, Block, GroupRequest, MessagePollOption, MessagePollVote, UserDeletedMessage, Follow
-from backend.app.schemas import ConversationOut, MessageCreate, MessageOut, GroupCreate, GroupRequestOut, GroupUpdate, GroupSettingsUpdate
+from backend.app.models import Conversation, ConversationMember, Message, User, Notification, Block, GroupRequest, MessagePollOption, MessagePollVote, UserDeletedMessage, Follow, MessageReaction
+from backend.app.schemas import ConversationOut, MessageCreate, MessageOut, GroupCreate, GroupRequestOut, GroupUpdate, GroupSettingsUpdate, ReactionCreate
 from backend.app.auth.security import get_current_user, SECRET_KEY, ALGORITHM
 from jose import jwt, JWTError
-from backend.app.utils import format_user_out
+from backend.app.utils import format_user_out, format_reactions
 from backend.app.quotas import quota_status, quota_error_detail, log_event
 
 router = APIRouter(prefix="/conversations", tags=["Messaging"])
@@ -252,6 +252,9 @@ async def get_messages(conversation_id: int, current_user: User = Depends(get_cu
                     "user_voted": user_voted
                 })
 
+        msg_reactions = db.query(MessageReaction).filter(MessageReaction.message_id == m.id).all()
+        reactions_data = format_reactions(msg_reactions, current_user.id)
+
         res.append({
             "id": m.id,
             "conversation_id": m.conversation_id,
@@ -271,7 +274,8 @@ async def get_messages(conversation_id: int, current_user: User = Depends(get_cu
             "is_deleted": m.is_deleted,
             "deleted_by_admin": m.deleted_by_admin,
             "created_at": m.created_at,
-            "sender_avatar": sender.profile.avatar_url if sender and sender.profile else None
+            "sender_avatar": sender.profile.avatar_url if sender and sender.profile else None,
+            "reactions": reactions_data
         })
     return res
 
@@ -364,12 +368,69 @@ async def send_message_rest(conversation_id: int, data: MessageCreate, current_u
         "attachment_url": new_msg.attachment_url,
         "attachment_type": new_msg.attachment_type,
         "created_at": new_msg.created_at.isoformat() if new_msg.created_at else None,
-        "sender_avatar": current_user.profile.avatar_url if current_user.profile else None
+        "sender_avatar": current_user.profile.avatar_url if current_user.profile else None,
+        "reactions": []
     }
 
     # Broadcast real-time to active WebSocket subscribers
     await manager.broadcast_message(conversation_id, msg_payload)
     return msg_payload
+
+
+@router.post("/{conversation_id}/messages/{message_id}/reactions")
+async def react_to_message(
+    conversation_id: int,
+    message_id: int,
+    data: ReactionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    membership = db.query(ConversationMember).filter(
+        ConversationMember.conversation_id == conversation_id,
+        ConversationMember.user_id == current_user.id
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this conversation.")
+
+    message = db.query(Message).filter(
+        Message.id == message_id,
+        Message.conversation_id == conversation_id,
+        Message.is_deleted == False
+    ).first()
+    if not message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    emoji = data.emoji.strip()
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji cannot be empty")
+
+    existing = db.query(MessageReaction).filter(
+        MessageReaction.message_id == message_id,
+        MessageReaction.user_id == current_user.id,
+        MessageReaction.emoji == emoji
+    ).first()
+
+    if existing:
+        db.delete(existing)
+    else:
+        new_reaction = MessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji)
+        db.add(new_reaction)
+
+    db.commit()
+
+    all_reactions = db.query(MessageReaction).filter(MessageReaction.message_id == message_id).all()
+    formatted = format_reactions(all_reactions, current_user.id)
+
+    # Broadcast reaction to everyone in conversation
+    await manager.broadcast_message(conversation_id, {
+        "type": "reaction_update",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "reactions": formatted
+    })
+
+    return {"reactions": formatted}
+
 
 @router.post("/{conversation_id}/accept")
 def accept_request(conversation_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):

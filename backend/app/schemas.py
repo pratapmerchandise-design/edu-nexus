@@ -130,6 +130,15 @@ class PostCreate(BaseModel):
     audience: Optional[str] = "public"
     community_id: Optional[int] = None
 
+class ReactionOut(BaseModel):
+    emoji: str
+    count: int = 0
+    user_reacted: bool = False
+    usernames: List[str] = []
+
+class ReactionCreate(BaseModel):
+    emoji: str
+
 class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[int] = None
@@ -143,6 +152,9 @@ class CommentOut(BaseModel):
     author_avatar: Optional[str] = None
     parent_id: Optional[int] = None
     content: str
+    likes_count: int = 0
+    user_liked: bool = False
+    reactions: List[ReactionOut] = []
     created_at: datetime
     replies: List['CommentOut'] = []
 
@@ -167,6 +179,7 @@ class PostOut(BaseModel):
     comments_count: int = 0
     user_liked: bool = False
     user_saved: bool = False
+    reactions: List[ReactionOut] = []
     audience: Optional[str] = "public"
     audience_community_id: Optional[int] = None
     location: Optional[str] = None
@@ -394,6 +407,7 @@ class MessageOut(BaseModel):
     deleted_by_admin: bool = False
     created_at: Optional[datetime] = None
     sender_avatar: Optional[str] = None
+    reactions: List[ReactionOut] = []
 
     class Config:
         from_attributes = True

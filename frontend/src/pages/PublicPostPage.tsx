@@ -7,6 +7,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { MembershipBadge } from '../components/MembershipBadge';
 import { InlineComments } from '../components/InlineComments';
 import { SharePostModal } from '../components/SharePostModal';
+import { ReactionPicker } from '../components/ReactionPicker';
 import { AuroraGlow } from '../components/reactbits/AuroraGlow';
 import type { Post, Comment } from '../types';
 import { 
@@ -27,7 +28,9 @@ import {
   UserPlus, 
   Check, 
   BarChart2, 
-  AlertCircle
+  AlertCircle,
+  Smile,
+  Trash
 } from 'lucide-react';
 
 export const PublicPostPage: React.FC = () => {
@@ -47,6 +50,7 @@ export const PublicPostPage: React.FC = () => {
   const [pollOptions, setPollOptions] = useState<any[]>([]);
   const [votingPoll, setVotingPoll] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [activePostReactionOpen, setActivePostReactionOpen] = useState(false);
 
   // Comments state
   const [comments, setComments] = useState<Comment[]>([]);
@@ -189,6 +193,91 @@ export const PublicPostPage: React.FC = () => {
     }
   };
 
+  const handleDeletePost = async () => {
+    if (!post) return;
+    if (!window.confirm("Are you sure you want to delete this post? This cannot be undone.")) return;
+    try {
+      await api.delete(`/posts/${post.id}`);
+      navigate('/app/feed');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete post');
+    }
+  };
+
+  const handleReactPost = async (emoji: string) => {
+    if (!user) {
+      navigate(`/login?redirect=/p/${id}`);
+      return;
+    }
+    if (!post) return;
+    try {
+      const res = await api.post<{ reactions: any[]; likes_count: number; user_liked: boolean }>(
+        `/posts/${post.id}/react`,
+        { emoji }
+      );
+      setPost((prev) =>
+        prev
+          ? {
+              ...prev,
+              reactions: res.reactions,
+              likes_count: res.likes_count,
+              user_liked: res.user_liked,
+            }
+          : prev
+      );
+      setLikesCount(res.likes_count);
+      setIsLiked(res.user_liked);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleReactComment = async (commentId: number, emoji: string) => {
+    if (!user) {
+      navigate(`/login?redirect=/p/${id}`);
+      return;
+    }
+    try {
+      const res = await api.post<{ reactions: any[]; likes_count: number; user_liked: boolean }>(
+        `/posts/comments/${commentId}/react`,
+        { emoji }
+      );
+      const apply = (list: Comment[]): Comment[] =>
+        list.map((c) => {
+          if (c.id === commentId) {
+            return {
+              ...c,
+              reactions: res.reactions,
+              likes_count: res.likes_count,
+              user_liked: res.user_liked,
+            };
+          }
+          if (c.replies?.length) return { ...c, replies: apply(c.replies) };
+          return c;
+        });
+      setComments((prev) => apply(prev));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number) => {
+    if (!window.confirm("Are you sure you want to delete this comment?")) return;
+    try {
+      await api.delete(`/posts/comments/${commentId}`);
+      const remove = (list: Comment[]): Comment[] =>
+        list
+          .filter((c) => c.id !== commentId)
+          .map((c) => (c.replies?.length ? { ...c, replies: remove(c.replies) } : c));
+      setComments((prev) => remove(prev));
+      setPost((prev) =>
+        prev ? { ...prev, comments_count: Math.max(0, (prev.comments_count || 1) - 1) } : prev
+      );
+    } catch (e: any) {
+      alert(e.message || 'Failed to delete comment');
+    }
+  };
+
   // Render post content inside page
   const renderPostCard = () => {
     if (!post) return null;
@@ -224,12 +313,24 @@ export const PublicPostPage: React.FC = () => {
             </div>
           </div>
 
-          {post.author_school && (
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-secondary/70 border border-border text-xs text-muted-foreground">
-              <Building2 className="w-3.5 h-3.5 text-primary" />
-              <span className="truncate max-w-[150px]">{post.author_school}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {post.author_school && (
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-secondary/70 border border-border text-xs text-muted-foreground">
+                <Building2 className="w-3.5 h-3.5 text-primary" />
+                <span className="truncate max-w-[150px]">{post.author_school}</span>
+              </div>
+            )}
+            {user && (post.author_id === user.id || user.role === 'admin') && (
+              <button
+                type="button"
+                onClick={handleDeletePost}
+                className="p-1.5 rounded-xl text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                title="Delete post"
+              >
+                <Trash className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Post Title & Content */}
@@ -325,19 +426,44 @@ export const PublicPostPage: React.FC = () => {
 
         {/* Action Buttons Bar */}
         <div className="pt-3 border-t border-border/80 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-4">
-            {/* Like */}
-            <button
-              onClick={handleLikeToggle}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-                isLiked
-                  ? 'text-red-500 bg-red-500/10 shadow-sm'
-                  : 'text-muted-foreground hover:text-red-500 hover:bg-red-500/10'
-              }`}
-            >
-              <Heart className={`w-4 h-4 ${isLiked ? 'fill-red-500' : ''}`} />
-              <span>{likesCount}</span>
-            </button>
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            {/* Like & Reaction */}
+            <div className="relative flex items-center gap-1">
+              <button
+                onClick={handleLikeToggle}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  isLiked
+                    ? 'text-red-500 bg-red-500/10 shadow-sm'
+                    : 'text-muted-foreground hover:text-red-500 hover:bg-red-500/10'
+                }`}
+              >
+                <Heart className={`w-4 h-4 ${isLiked ? 'fill-red-500' : ''}`} />
+                <span>{likesCount}</span>
+              </button>
+
+              {user && (
+                <button
+                  type="button"
+                  onClick={() => setActivePostReactionOpen((prev) => !prev)}
+                  className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+                  title="React with emoji"
+                >
+                  <Smile className="w-4 h-4" />
+                </button>
+              )}
+
+              {activePostReactionOpen && (
+                <ReactionPicker
+                  position="top"
+                  align="left"
+                  onSelect={(emoji) => {
+                    handleReactPost(emoji);
+                    setActivePostReactionOpen(false);
+                  }}
+                  onClose={() => setActivePostReactionOpen(false)}
+                />
+              )}
+            </div>
 
             {/* Comment */}
             <button
@@ -349,7 +475,7 @@ export const PublicPostPage: React.FC = () => {
                   if (inputEl) inputEl.focus();
                 }
               }}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all cursor-pointer"
             >
               <MessageSquare className="w-4 h-4" />
               <span>{comments.length || post.comments_count || 0}</span>
@@ -359,7 +485,7 @@ export const PublicPostPage: React.FC = () => {
             {user && (
               <button
                 onClick={handleSaveToggle}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   isSaved
                     ? 'text-primary bg-primary/10'
                     : 'text-muted-foreground hover:text-primary hover:bg-secondary'
@@ -374,12 +500,34 @@ export const PublicPostPage: React.FC = () => {
           {/* Share Button */}
           <button
             onClick={() => setIsShareModalOpen(true)}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:brightness-110 shadow-md shadow-primary/20 transition-all"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:brightness-110 shadow-md shadow-primary/20 transition-all cursor-pointer"
           >
             <Share2 className="w-4 h-4" />
             <span>Share</span>
           </button>
         </div>
+
+        {/* Post Reaction Badges */}
+        {post.reactions && post.reactions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2">
+            {post.reactions.map((r) => (
+              <button
+                key={r.emoji}
+                type="button"
+                onClick={() => handleReactPost(r.emoji)}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-2xs ${
+                  r.user_reacted
+                    ? 'bg-primary/20 border-primary/50 text-primary font-bold'
+                    : 'bg-card/90 border-border text-foreground/80 hover:bg-secondary'
+                }`}
+                title={r.usernames && r.usernames.length > 0 ? r.usernames.join(', ') : `${r.count} reactions`}
+              >
+                <span>{r.emoji}</span>
+                <span className="text-[11px] font-bold">{r.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Comments Section */}
         <div className="pt-2">
@@ -393,6 +541,8 @@ export const PublicPostPage: React.FC = () => {
               onChangeInput={(patch) => setCommentInput((prev) => ({ ...prev, ...patch }))}
               onSubmit={handleAddComment}
               onLikeComment={handleLikeComment}
+              onReactComment={(cid, emoji) => handleReactComment(cid, emoji)}
+              onDeleteComment={(cid) => handleDeleteComment(cid)}
               canReply={{ allowed: true }}
             />
           ) : (

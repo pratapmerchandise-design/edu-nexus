@@ -54,6 +54,13 @@ export interface PollOption {
   user_voted: boolean;
 }
 
+export interface ReactionItem {
+  emoji: string;
+  count: number;
+  user_reacted: boolean;
+  usernames?: string[];
+}
+
 export interface Post {
   id: number;
   author_id: number;
@@ -70,6 +77,7 @@ export interface Post {
   comments_count: number;
   user_liked: boolean;
   user_saved: boolean;
+  reactions?: ReactionItem[];
   author_membership?: MembershipInfo | null;
   audience?: string;
   audience_community_id?: number | null;
@@ -100,6 +108,7 @@ export interface Comment {
   likes_count?: number;
   user_liked?: boolean;
   user_disliked?: boolean;
+  reactions?: ReactionItem[];
   author_membership?: MembershipInfo | null;
   created_at: string;
   replies: Comment[];
@@ -241,6 +250,7 @@ export interface Message {
   is_deleted?: boolean;
   deleted_by_admin?: boolean;
   created_at: string;
+  reactions?: ReactionItem[];
 }
 
 export interface NotificationItem {

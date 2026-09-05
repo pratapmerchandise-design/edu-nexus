@@ -13,6 +13,7 @@ import { CreatePollModal } from './components/CreatePollModal';
 import { MembershipBadge } from '../../components/MembershipBadge';
 import { GifPicker } from '../../components/GifPicker';
 import { StickerPicker } from '../../components/StickerPicker';
+import { ReactionPicker } from '../../components/ReactionPicker';
 import { renderContentWithHighlights, isStickerOnlyContent } from '../../utils/textUtils';
 
 export const MessagesPage: React.FC = () => {
@@ -26,6 +27,7 @@ export const MessagesPage: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [activeMessageMenu, setActiveMessageMenu] = useState<number | null>(null);
+  const [activeReactionMessageId, setActiveReactionMessageId] = useState<number | null>(null);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isTyping, setIsTyping] = useState(false);
@@ -97,6 +99,21 @@ export const MessagesPage: React.FC = () => {
       await api.post(`/conversations/requests/${reqId}/reject`);
       await fetchGroupRequests();
     } catch (e: any) { alert(e.message || "Failed to reject"); }
+  };
+
+  const handleReactMessage = async (messageId: number, emoji: string) => {
+    if (!activeConvId) return;
+    try {
+      const res = await api.post<{ reactions: any[] }>(
+        `/conversations/${activeConvId}/messages/${messageId}/reactions`,
+        { emoji }
+      );
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, reactions: res.reactions } : m))
+      );
+    } catch (e: any) {
+      console.error('Failed to react to message', e);
+    }
   };
 
   useEffect(() => {
@@ -275,6 +292,17 @@ export const MessagesPage: React.FC = () => {
               return;
             }
             
+            if (data.type === 'reaction_update') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === data.message_id
+                    ? { ...m, reactions: data.reactions }
+                    : m
+                )
+              );
+              return;
+            }
+
             setMessages((prev) => {
               if (prev.some((m) => m.id === data.id)) return prev;
               return [...prev, data];
@@ -851,10 +879,27 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
                             </div>
                           </div>
                           
-                          <div className="relative">
+                          <div className="relative flex items-center gap-0.5">
+                              <button
+                                onClick={() => setActiveReactionMessageId(activeReactionMessageId === m.id ? null : m.id)}
+                                className="p-1.5 rounded-full bg-secondary text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground hover:bg-border cursor-pointer"
+                                title="React to message"
+                              >
+                                <Smile className="w-3.5 h-3.5" />
+                              </button>
+
+                              {activeReactionMessageId === m.id && (
+                                <ReactionPicker
+                                  position="top"
+                                  align={isMe ? 'right' : 'left'}
+                                  onSelect={(emoji) => handleReactMessage(m.id, emoji)}
+                                  onClose={() => setActiveReactionMessageId(null)}
+                                />
+                              )}
+
                               <button
                                 onClick={() => setActiveMessageMenu(activeMessageMenu === m.id ? null : m.id)}
-                                className="p-1.5 rounded-full bg-secondary text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground hover:bg-border"
+                                className="p-1.5 rounded-full bg-secondary text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-foreground hover:bg-border cursor-pointer"
                                 title="Message options"
                               >
                                 <MoreHorizontal className="w-3.5 h-3.5" />
@@ -886,6 +931,29 @@ className={`block w-full text-left p-2.5 rounded-lg text-sm transition-all shado
                               )}
                             </div>
                         </div>
+
+                        {/* WhatsApp-style Reaction Pills */}
+                        {m.reactions && m.reactions.length > 0 && (
+                          <div className={`flex flex-wrap gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                            {m.reactions.map((r) => (
+                              <button
+                                key={r.emoji}
+                                type="button"
+                                onClick={() => handleReactMessage(m.id, r.emoji)}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-2xs ${
+                                  r.user_reacted
+                                    ? 'bg-primary/20 border-primary/50 text-primary font-bold'
+                                    : 'bg-card/90 border-border text-foreground/80 hover:bg-secondary'
+                                }`}
+                                title={r.usernames && r.usernames.length > 0 ? r.usernames.join(', ') : `${r.count} reactions`}
+                              >
+                                <span>{r.emoji}</span>
+                                <span className="text-[10px] font-bold">{r.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
                         <span className="text-[9px] text-muted-foreground font-medium mt-1 px-1.5 py-0.5 rounded-full bg-background/50 dark:bg-background/70 backdrop-blur-xs flex items-center gap-1 shadow-xs">
                           {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           {isMe && (

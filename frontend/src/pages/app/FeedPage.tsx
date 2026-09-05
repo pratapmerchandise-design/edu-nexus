@@ -10,10 +10,11 @@ import type { Post, Comment } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { renderContentWithHighlights, timeAgo, isVideoUrl } from '../../utils/textUtils';
-import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, Send, FileText, GraduationCap, Check } from 'lucide-react';
+import { Heart, MessageSquare, Bookmark, Plus, Flag, Sparkles, Image as ImageIcon, BarChart2, X, Globe, Users, AtSign, Smile, MapPin, Lightbulb, Handshake, Trophy, Info, ChevronDown, Send, FileText, GraduationCap, Check, Trash } from 'lucide-react';
 import { GifPicker } from '../../components/GifPicker';
 import { StickerPicker } from '../../components/StickerPicker';
 import { InlineComments } from '../../components/InlineComments';
+import { ReactionPicker } from '../../components/ReactionPicker';
 import { SharePostModal } from '../../components/SharePostModal';
 
 export const FeedPage: React.FC = () => {
@@ -23,6 +24,7 @@ export const FeedPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [feedMode, setFeedMode] = useState<'for-you' | 'following' | 'trending' | 'school'>('for-you');
+  const [activePostReactionId, setActivePostReactionId] = useState<number | null>(null);
   const [sharingPost, setSharingPost] = useState<Post | null>(null);
   
   // Post Creation State
@@ -147,19 +149,8 @@ export const FeedPage: React.FC = () => {
     }
   };
 
-  const handleLikeToggle = async (postId: number) => {
-    try {
-      const res = await api.post<{ liked: boolean; likes_count: number }>(`/posts/${postId}/like`);
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === postId
-            ? { ...p, user_liked: res.liked, likes_count: res.likes_count }
-            : p
-        )
-      );
-    } catch (e) {
-      console.error(e);
-    }
+  const handleLikeToggle = (postId: number) => {
+    handleReactPost(postId, '❤️');
   };
 
   const handleSaveToggle = async (postId: number) => {
@@ -199,6 +190,89 @@ export const FeedPage: React.FC = () => {
       });
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleDeletePost = async (postId: number) => {
+    if (!window.confirm("Are you sure you want to delete this post? This cannot be undone.")) return;
+    try {
+      await api.delete(`/posts/${postId}`);
+      setPosts((prev) => prev.filter((p) => p.id !== postId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete post');
+    }
+  };
+
+  const handleReactPost = async (postId: number, emoji: string) => {
+    try {
+      const res = await api.post<{ reactions: any[]; likes_count: number; user_liked: boolean }>(
+        `/posts/${postId}/react`,
+        { emoji }
+      );
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === postId
+            ? {
+                ...p,
+                reactions: res.reactions,
+                likes_count: res.likes_count,
+                user_liked: res.user_liked,
+              }
+            : p
+        )
+      );
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleReactComment = async (commentId: number, postId: number, emoji: string) => {
+    try {
+      const res = await api.post<{ reactions: any[]; likes_count: number; user_liked: boolean }>(
+        `/posts/comments/${commentId}/react`,
+        { emoji }
+      );
+      const apply = (list: Comment[]): Comment[] =>
+        list.map((c) => {
+          if (c.id === commentId) {
+            return {
+              ...c,
+              reactions: res.reactions,
+              likes_count: res.likes_count,
+              user_liked: res.user_liked,
+            };
+          }
+          if (c.replies?.length) return { ...c, replies: apply(c.replies) };
+          return c;
+        });
+      setCommentsByPostId((prev) => {
+        const list = prev[postId];
+        if (!list) return prev;
+        return { ...prev, [postId]: apply(list) };
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number, postId: number) => {
+    if (!window.confirm("Are you sure you want to delete this comment?")) return;
+    try {
+      await api.delete(`/posts/comments/${commentId}`);
+      const remove = (list: Comment[]): Comment[] =>
+        list
+          .filter((c) => c.id !== commentId)
+          .map((c) => (c.replies?.length ? { ...c, replies: remove(c.replies) } : c));
+      setCommentsByPostId((prev) => {
+        const list = prev[postId];
+        if (!list) return prev;
+        return { ...prev, [postId]: remove(list) };
+      });
+      setPosts((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, comments_count: Math.max(0, p.comments_count - 1) } : p))
+      );
+    } catch (e: any) {
+      alert(e.message || 'Failed to delete comment');
     }
   };
 
@@ -473,6 +547,18 @@ export const FeedPage: React.FC = () => {
                           {post.audience === 'followers' ? 'Followers only' : 'Community'}
                         </span>
                       )}
+                      {/* Delete post option for author or platform admin */}
+                      {user && (post.author_id === user.id || user.role === 'admin') && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePost(post.id)}
+                          className="text-muted-foreground hover:text-red-400 p-1 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                          title="Delete post"
+                        >
+                          <Trash className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+
                       <button
                         onClick={async () => {
                           if (!confirm('Report this post to moderators?')) return;
@@ -483,7 +569,7 @@ export const FeedPage: React.FC = () => {
                             alert(e.message || 'Failed to submit report');
                           }
                         }}
-                        className="text-muted-foreground hover:text-red-400 p-1"
+                        className="text-muted-foreground hover:text-red-400 p-1 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
                         title="Report post"
                       >
                         <Flag className="w-3.5 h-3.5" />
@@ -583,19 +669,39 @@ export const FeedPage: React.FC = () => {
 
                   {/* Interaction Footer */}
                   <div className="pt-4 mt-1 border-t border-border flex items-center justify-between text-sm text-muted-foreground">
-                    <button
-                      onClick={() => handleLikeToggle(post.id)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
-                        post.user_liked ? 'text-primary font-bold bg-primary/10' : 'hover:text-foreground hover:bg-secondary'
-                      }`}
-                    >
-                      <Heart className={`w-4 h-4 ${post.user_liked ? 'fill-primary' : ''}`} />
-                      <span>{post.likes_count}</span>
-                    </button>
+                    <div className="relative flex items-center gap-1">
+                      <button
+                        onClick={() => handleLikeToggle(post.id)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                          post.user_liked ? 'text-primary font-bold bg-primary/10' : 'hover:text-foreground hover:bg-secondary'
+                        }`}
+                      >
+                        <Heart className={`w-4 h-4 ${post.user_liked ? 'fill-primary' : ''}`} />
+                        <span>{post.likes_count}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActivePostReactionId(activePostReactionId === post.id ? null : post.id)}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+                        title="React with emoji"
+                      >
+                        <Smile className="w-4 h-4" />
+                      </button>
+
+                      {activePostReactionId === post.id && (
+                        <ReactionPicker
+                          position="top"
+                          align="left"
+                          onSelect={(emoji) => handleReactPost(post.id, emoji)}
+                          onClose={() => setActivePostReactionId(null)}
+                        />
+                      )}
+                    </div>
 
                     <button
                       onClick={() => toggleComments(post)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                         expandedCommentsPostId === post.id
                           ? 'text-primary font-bold bg-primary/10'
                           : 'hover:text-foreground hover:bg-secondary'
@@ -607,7 +713,7 @@ export const FeedPage: React.FC = () => {
 
                     <button
                       onClick={() => handleSaveToggle(post.id)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                         post.user_saved ? 'text-primary font-bold bg-primary/10' : 'hover:text-foreground hover:bg-secondary'
                       }`}
                     >
@@ -616,13 +722,35 @@ export const FeedPage: React.FC = () => {
                     </button>
                     <button
                       onClick={() => setSharingPost(post)}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-primary hover:bg-secondary transition-colors"
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:text-primary hover:bg-secondary transition-colors cursor-pointer"
                       title="Share post"
                     >
                       <Send className="w-4 h-4" />
                       <span>Share</span>
                     </button>
                   </div>
+
+                  {/* Post Reaction Badges */}
+                  {post.reactions && post.reactions.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 pt-2">
+                      {post.reactions.map((r) => (
+                        <button
+                          key={r.emoji}
+                          type="button"
+                          onClick={() => handleReactPost(post.id, r.emoji)}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-2xs ${
+                            r.user_reacted
+                              ? 'bg-primary/20 border-primary/50 text-primary font-bold'
+                              : 'bg-card/90 border-border text-foreground/80 hover:bg-secondary'
+                          }`}
+                          title={r.usernames && r.usernames.length > 0 ? r.usernames.join(', ') : `${r.count} reactions`}
+                        >
+                          <span>{r.emoji}</span>
+                          <span className="text-[11px] font-bold">{r.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Follow-context line: who you follow liked or commented on this */}
                   {((post.liked_by_following && post.liked_by_following.length > 0) ||
@@ -674,6 +802,8 @@ export const FeedPage: React.FC = () => {
                       onChangeInput={(patch) => setCommentInputFor(post.id, patch)}
                       onSubmit={() => handleAddComment(post.id)}
                       onLikeComment={(cid) => handleToggleCommentLike(cid, post.id)}
+                      onReactComment={(cid, emoji) => handleReactComment(cid, post.id, emoji)}
+                      onDeleteComment={(cid) => handleDeleteComment(cid, post.id)}
                       canReply={canReplyForPost(post)}
                     />
                   )}

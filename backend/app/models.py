@@ -680,3 +680,46 @@ class ContactMessage(Base):
     email = Column(String(255), nullable=False)
     message = Column(Text, nullable=False)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MessageReaction(Base):
+    __tablename__ = 'message_reactions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    emoji = Column(String(32), nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('message_id', 'user_id', 'emoji', name='_user_message_reaction_uc'),)
+
+    message = relationship('Message', backref=backref('reactions', cascade='all, delete-orphan'))
+    user = relationship('User')
+
+
+class PostReaction(Base):
+    __tablename__ = 'post_reactions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey('posts.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    emoji = Column(String(32), nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('post_id', 'user_id', 'emoji', name='_user_post_reaction_uc'),)
+
+    post = relationship('Post', backref=backref('reactions', cascade='all, delete-orphan'))
+    user = relationship('User')
+
+
+class CommentReaction(Base):
+    __tablename__ = 'comment_reactions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    comment_id = Column(Integer, ForeignKey('comments.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    emoji = Column(String(32), nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('comment_id', 'user_id', 'emoji', name='_user_comment_reaction_uc'),)
+
+    comment = relationship('Comment', backref=backref('reactions', cascade='all, delete-orphan'))
+    user = relationship('User')
+

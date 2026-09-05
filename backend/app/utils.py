@@ -109,3 +109,33 @@ def format_user_out(user: User, current_user_id: int | None = None, db: Session 
         "pending_requests_count": pending_requests_count,
         "membership": _membership_info(user, db),
     }
+
+
+def format_reactions(reactions: list, current_user_id: int | None = None) -> list:
+    """Format a list of Reaction objects (MessageReaction, PostReaction, CommentReaction)
+    into aggregated list of { emoji, count, user_reacted, usernames }.
+    """
+    if not reactions:
+        return []
+
+    from collections import defaultdict
+    grouped = defaultdict(lambda: {"count": 0, "user_reacted": False, "usernames": []})
+    for r in reactions:
+        item = grouped[r.emoji]
+        item["count"] += 1
+        if current_user_id and r.user_id == current_user_id:
+            item["user_reacted"] = True
+        u_name = getattr(r.user, "username", None) if getattr(r, "user", None) else None
+        if u_name and len(item["usernames"]) < 5:
+            item["usernames"].append(u_name)
+
+    res = []
+    for emoji, data in grouped.items():
+        res.append({
+            "emoji": emoji,
+            "count": data["count"],
+            "user_reacted": data["user_reacted"],
+            "usernames": data["usernames"]
+        })
+    return res
+

@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from backend.app.database import get_db
-from backend.app.models import Post, PostImage, PollOption, PollVote, Like, Comment, CommentLike, SavedPost, User, Notification, Follow, Interest, Skill, UserMembership, SchoolMember
+from backend.app.models import Post, PostImage, PollOption, PollVote, Like, Comment, CommentLike, SavedPost, User, Notification, Follow, Interest, Skill, UserMembership, SchoolMember, PostReaction, CommentReaction
 from backend.app import membership_config as mconfig
-from backend.app.schemas import PostCreate, PostOut, CommentCreate, CommentOut
+from backend.app.schemas import PostCreate, PostOut, CommentCreate, CommentOut, ReactionCreate
 from backend.app.auth.security import get_current_user, get_current_user_optional
-from backend.app.utils import _membership_info
+from backend.app.utils import _membership_info, format_reactions
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
@@ -93,6 +93,10 @@ def format_post_out(post: Post, current_user_id: int, db: Session, following_ids
     user_liked = db.query(Like).filter(Like.post_id == post.id, Like.user_id == current_user_id).first() is not None
     user_saved = db.query(SavedPost).filter(SavedPost.post_id == post.id, SavedPost.user_id == current_user_id).first() is not None
 
+    # Reactions
+    post_reactions = db.query(PostReaction).filter(PostReaction.post_id == post.id).all()
+    reactions_data = format_reactions(post_reactions, current_user_id)
+
     return {
         "id": post.id,
         "author_id": post.author_id,
@@ -112,6 +116,7 @@ def format_post_out(post: Post, current_user_id: int, db: Session, following_ids
         "comments_count": comments_cnt,
         "user_liked": user_liked,
         "user_saved": user_saved,
+        "reactions": reactions_data,
         "author_membership": _membership_info(author, db),
         "audience": getattr(post, "audience", "public") or "public",
         "audience_community_id": getattr(post, "audience_community_id", None),
@@ -417,6 +422,7 @@ def get_comments(post_id: int, request: Request, db: Session = Depends(get_db)):
 
     for c in all_comments:
         author = c.author
+        c_reactions = db.query(CommentReaction).filter(CommentReaction.comment_id == c.id).all()
         c_dict = {
             "id": c.id,
             "post_id": c.post_id,
@@ -428,6 +434,7 @@ def get_comments(post_id: int, request: Request, db: Session = Depends(get_db)):
             "content": c.content,
             "likes_count": db.query(CommentLike).filter(CommentLike.comment_id == c.id).count(),
             "user_liked": (db.query(CommentLike).filter(CommentLike.comment_id == c.id, CommentLike.user_id == viewer_id).first() is not None) if viewer_id else False,
+            "reactions": format_reactions(c_reactions, viewer_id),
             "author_membership": _membership_info(author, db),
             "created_at": c.created_at,
             "replies": []
@@ -536,3 +543,138 @@ def toggle_comment_like(comment_id: int, current_user: User = Depends(get_curren
     db.add(CommentLike(comment_id=comment_id, user_id=current_user.id))
     db.commit()
     return {"liked": True, "likes_count": db.query(CommentLike).filter(CommentLike.comment_id == comment_id).count()}
+
+
+@router.delete("/{post_id}")
+def delete_post(
+    post_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False).first()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+    if post.author_id != current_user.id and current_user.role != 'admin':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this post")
+
+    post.is_deleted = True
+    db.commit()
+    return {"message": "Post deleted successfully", "id": post_id}
+
+
+@router.post("/{post_id}/react")
+def react_to_post(
+    post_id: int,
+    data: ReactionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    post = db.query(Post).filter(Post.id == post_id, Post.is_deleted == False).first()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    emoji = data.emoji.strip()
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji cannot be empty")
+
+    existing = db.query(PostReaction).filter(
+        PostReaction.post_id == post_id,
+        PostReaction.user_id == current_user.id,
+        PostReaction.emoji == emoji
+    ).first()
+
+    if existing:
+        db.delete(existing)
+        if emoji == "❤️":
+            like = db.query(Like).filter(Like.post_id == post_id, Like.user_id == current_user.id).first()
+            if like:
+                db.delete(like)
+    else:
+        new_reaction = PostReaction(post_id=post_id, user_id=current_user.id, emoji=emoji)
+        db.add(new_reaction)
+        if emoji == "❤️":
+            like = db.query(Like).filter(Like.post_id == post_id, Like.user_id == current_user.id).first()
+            if not like:
+                db.add(Like(post_id=post_id, user_id=current_user.id))
+
+    db.commit()
+
+    all_reactions = db.query(PostReaction).filter(PostReaction.post_id == post_id).all()
+    formatted = format_reactions(all_reactions, current_user.id)
+    likes_cnt = db.query(Like).filter(Like.post_id == post_id).count()
+    user_liked = db.query(Like).filter(Like.post_id == post_id, Like.user_id == current_user.id).first() is not None
+
+    return {
+        "reactions": formatted,
+        "likes_count": likes_cnt,
+        "user_liked": user_liked
+    }
+
+
+@router.post("/comments/{comment_id}/react")
+def react_to_comment(
+    comment_id: int,
+    data: ReactionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    comment = db.query(Comment).filter(Comment.id == comment_id, Comment.is_deleted == False).first()
+    if not comment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+
+    emoji = data.emoji.strip()
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji cannot be empty")
+
+    existing = db.query(CommentReaction).filter(
+        CommentReaction.comment_id == comment_id,
+        CommentReaction.user_id == current_user.id,
+        CommentReaction.emoji == emoji
+    ).first()
+
+    if existing:
+        db.delete(existing)
+        if emoji == "❤️":
+            cl = db.query(CommentLike).filter(CommentLike.comment_id == comment_id, CommentLike.user_id == current_user.id).first()
+            if cl:
+                db.delete(cl)
+    else:
+        new_reaction = CommentReaction(comment_id=comment_id, user_id=current_user.id, emoji=emoji)
+        db.add(new_reaction)
+        if emoji == "❤️":
+            cl = db.query(CommentLike).filter(CommentLike.comment_id == comment_id, CommentLike.user_id == current_user.id).first()
+            if not cl:
+                db.add(CommentLike(comment_id=comment_id, user_id=current_user.id))
+
+    db.commit()
+
+    all_reactions = db.query(CommentReaction).filter(CommentReaction.comment_id == comment_id).all()
+    formatted = format_reactions(all_reactions, current_user.id)
+    likes_cnt = db.query(CommentLike).filter(CommentLike.comment_id == comment_id).count()
+    user_liked = db.query(CommentLike).filter(CommentLike.comment_id == comment_id, CommentLike.user_id == current_user.id).first() is not None
+
+    return {
+        "reactions": formatted,
+        "likes_count": likes_cnt,
+        "user_liked": user_liked
+    }
+
+
+@router.delete("/comments/{comment_id}")
+def delete_comment(
+    comment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    comment = db.query(Comment).filter(Comment.id == comment_id, Comment.is_deleted == False).first()
+    if not comment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+
+    # Author of comment, author of post, or admin can delete
+    if comment.author_id != current_user.id and (not comment.post or comment.post.author_id != current_user.id) and current_user.role != 'admin':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this comment")
+
+    comment.is_deleted = True
+    db.commit()
+    return {"message": "Comment deleted successfully", "id": comment_id}
+
