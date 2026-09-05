@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -70,6 +70,36 @@ class UserOut(BaseModel):
     has_pending_request_from: Optional[bool] = False
     pending_requests_count: Optional[int] = 0
     membership: Optional[dict] = None
+
+    @field_validator('interests', mode='before')
+    @classmethod
+    def serialize_interests(cls, v):
+        if not v:
+            return []
+        res = []
+        for item in v:
+            if isinstance(item, str):
+                res.append(item)
+            elif hasattr(item, 'name'):
+                res.append(item.name)
+            elif isinstance(item, dict) and 'name' in item:
+                res.append(item['name'])
+        return res
+
+    @field_validator('skills', mode='before')
+    @classmethod
+    def serialize_skills(cls, v):
+        if not v:
+            return []
+        res = []
+        for item in v:
+            if isinstance(item, str):
+                res.append(item)
+            elif hasattr(item, 'name'):
+                res.append(item.name)
+            elif isinstance(item, dict) and 'name' in item:
+                res.append(item['name'])
+        return res
 
     class Config:
         from_attributes = True

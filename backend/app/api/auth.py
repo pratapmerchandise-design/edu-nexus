@@ -100,18 +100,16 @@ def register_user(data: UserRegister, db: Session = Depends(get_db)):
 
     # Process School Membership
     if selected_school_name:
-        school_obj = db.query(School).filter(School.name.ilike(selected_school_name)).first()
-        if not school_obj:
-            school_obj = School(name=selected_school_name)
-            db.add(school_obj)
-            db.flush()
-        
-        school_member = SchoolMember(
-            school_id=school_obj.id,
-            user_id=new_user.id,
-            role='student'
-        )
-        db.add(school_member)
+        from backend.app.api.schools import find_or_create_school, sync_school_memberships_for_school
+        school_obj = find_or_create_school(db, selected_school_name)
+        if school_obj:
+            school_member = SchoolMember(
+                school_id=school_obj.id,
+                user_id=new_user.id,
+                role='student'
+            )
+            db.add(school_member)
+            sync_school_memberships_for_school(db, school_obj)
 
     db.commit()
 

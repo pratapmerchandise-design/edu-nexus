@@ -59,25 +59,25 @@ def update_profile(data: ProfileUpdate, current_user: User = Depends(get_current
     if data.city is not None:
         profile.city = data.city
     if data.school is not None:
-        profile.school = data.school
-        from backend.app.models import School, SchoolMember
+        clean_school = data.school.strip() if data.school else ""
+        profile.school = clean_school or None
+        from backend.app.models import SchoolMember
+        from backend.app.api.schools import find_or_create_school, sync_school_memberships_for_school
         
         # Remove existing membership
         db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).delete()
         
-        if data.school.strip():
-            school_obj = db.query(School).filter(School.name.ilike(data.school)).first()
-            if not school_obj:
-                school_obj = School(name=data.school)
-                db.add(school_obj)
-                db.flush()
-            
-            school_member = SchoolMember(
-                school_id=school_obj.id,
-                user_id=current_user.id,
-                role='student'
-            )
-            db.add(school_member)
+        if clean_school:
+            school_obj = find_or_create_school(db, clean_school)
+            if school_obj:
+                profile.school = school_obj.name
+                school_member = SchoolMember(
+                    school_id=school_obj.id,
+                    user_id=current_user.id,
+                    role='student'
+                )
+                db.add(school_member)
+                sync_school_memberships_for_school(db, school_obj)
     if data.grade is not None:
         profile.grade = data.grade
     if data.goals is not None:

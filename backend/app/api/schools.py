@@ -25,15 +25,110 @@ def _normalize_school_name(name: str) -> str:
     if not name:
         return ""
     import unicodedata
+    import re
     n = unicodedata.normalize("NFKD", name)
     n = "".join(c for c in n if not unicodedata.combining(c))
     n = n.lower()
-    # remove punctuation, collapse whitespace
     n = re.sub(r"[^a-z0-9]+", " ", n)
     n = re.sub(r"\s+", " ", n).strip()
-    # remove trailing/leading separators
-    n = n.strip(" ,.")
-    return n
+    return n.strip(" ,.")
+
+
+COMMON_ACRONYMS = {
+    'dps': 'delhi public school',
+    'aps': 'army public school',
+    'kv': 'kendriya vidyalaya',
+    'dav': 'dav public',
+    'iit': 'indian institute of technology',
+    'nit': 'national institute of technology',
+    'bits': 'birla institute',
+    'srcc': 'shri ram college',
+    'step': 'step by step',
+}
+
+
+def find_or_create_school(db: Session, raw_school_name: str) -> Optional[models.School]:
+    """Find the canonical School record or create one if none exists."""
+    if not raw_school_name or not raw_school_name.strip():
+        return None
+    clean = raw_school_name.strip()
+
+    # 1. Exact case-insensitive match
+    s = db.query(models.School).filter(models.School.name.ilike(clean)).first()
+    if s:
+        return s
+
+    # 2. Normalized match
+    norm = _normalize_school_name(clean)
+    if not norm:
+        return None
+
+    expanded_norm = norm
+    for acr, full_name in COMMON_ACRONYMS.items():
+        if acr == norm or f" {acr} " in f" {norm} ":
+            expanded_norm = _normalize_school_name(norm.replace(acr, full_name))
+            break
+
+    for s in db.query(models.School).all():
+        s_norm = _normalize_school_name(s.name)
+        if s_norm == norm or (expanded_norm and s_norm == expanded_norm):
+            return s
+
+    # 3. Substring match
+    if len(norm) >= 6:
+        for s in db.query(models.School).all():
+            s_norm = _normalize_school_name(s.name)
+            if norm in s_norm or s_norm in norm:
+                return s
+
+    # 4. Create new canonical record
+    s = models.School(name=clean)
+    db.add(s)
+    db.flush()
+    return s
+
+
+def sync_school_memberships_for_school(db: Session, school: models.School):
+    """Automatically ensure all students whose profile indicates this school
+    are properly linked as SchoolMembers."""
+    if not school:
+        return
+    norm_target = _normalize_school_name(school.name)
+
+    users_with_school = db.query(models.User).join(models.Profile).filter(
+        models.User.is_banned == False,
+        models.Profile.school.isnot(None)
+    ).all()
+
+    changed = False
+    for u in users_with_school:
+        user_school = (u.profile.school or '').strip()
+        if not user_school:
+            continue
+
+        matches = False
+        if user_school.lower() == school.name.lower():
+            matches = True
+        elif norm_target and _normalize_school_name(user_school) == norm_target:
+            matches = True
+        elif len(user_school) >= 4 and (user_school.lower() in school.name.lower() or school.name.lower() in user_school.lower()):
+            matches = True
+
+        if matches:
+            existing = db.query(models.SchoolMember).filter(
+                models.SchoolMember.school_id == school.id,
+                models.SchoolMember.user_id == u.id
+            ).first()
+            if not existing:
+                db.add(models.SchoolMember(
+                    school_id=school.id,
+                    user_id=u.id,
+                    role='student'
+                ))
+                changed = True
+
+    if changed:
+        db.commit()
 
 
 def _school_admins(db: Session, school_id: int):
@@ -56,34 +151,34 @@ def get_my_schools(
     current_user: models.User = Depends(get_current_user)
 ):
     """Get schools the current user is a member of"""
+    if current_user.profile and current_user.profile.school and current_user.profile.school.strip():
+        school_obj = find_or_create_school(db, current_user.profile.school)
+        if school_obj:
+            existing_member = db.query(models.SchoolMember).filter(
+                models.SchoolMember.user_id == current_user.id,
+                models.SchoolMember.school_id == school_obj.id
+            ).first()
+            if not existing_member:
+                new_member = models.SchoolMember(
+                    school_id=school_obj.id,
+                    user_id=current_user.id,
+                    role='student'
+                )
+                db.add(new_member)
+                db.commit()
+            sync_school_memberships_for_school(db, school_obj)
+
     school_members = db.query(models.SchoolMember).filter(models.SchoolMember.user_id == current_user.id).all()
-    if not school_members and current_user.profile and current_user.profile.school and current_user.profile.school.strip():
-        school_name = current_user.profile.school.strip()
-        # First try exact (case-insensitive) match
-        school_obj = db.query(models.School).filter(models.School.name.ilike(school_name)).first()
-        # Then fall back to normalized-name match across all schools so we don't
-        # create yet another duplicate row for "Delhi Public School, Rohini" if
-        # one already exists under a slightly different spelling.
-        if not school_obj:
-            normalized = _normalize_school_name(school_name)
-            for s in db.query(models.School).all():
-                if _normalize_school_name(s.name) == normalized and normalized:
-                    school_obj = s
-                    break
-        if not school_obj:
-            school_obj = models.School(name=school_name)
-            db.add(school_obj)
-            db.flush()
-        new_member = models.SchoolMember(
-            school_id=school_obj.id,
-            user_id=current_user.id,
-            role='student'
-        )
-        db.add(new_member)
-        db.commit()
-        db.refresh(new_member)
-        return [school_obj]
-    return [member.school for member in school_members if member.school]
+    schools = []
+    seen = set()
+    for member in school_members:
+        if member.school and member.school.id not in seen:
+            seen.add(member.school.id)
+            member.school.members_count = db.query(models.SchoolMember).filter(
+                models.SchoolMember.school_id == member.school.id
+            ).count()
+            schools.append(member.school)
+    return schools
 
 
 @router.get("/my-invitations", response_model=List[schemas.SchoolInvitationOut])
@@ -457,8 +552,66 @@ def get_school_members(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    """Get members of a school"""
-    return db.query(models.SchoolMember).filter(models.SchoolMember.school_id == school_id).all()
+    """Get members of a school with automatic classmates synchronization and rich profile formatting."""
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    # Automatically synchronize any students whose profile has this school
+    sync_school_memberships_for_school(db, school)
+
+    members = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == school_id
+    ).join(models.User).filter(
+        models.User.is_banned == False
+    ).order_by(models.SchoolMember.created_at.desc()).all()
+
+    return [
+        {
+            "id": m.id,
+            "school_id": m.school_id,
+            "role": m.role or "student",
+            "user": format_user_out(m.user, current_user.id, db),
+            "created_at": m.created_at or datetime.now(timezone.utc),
+        }
+        for m in members if m.user
+    ]
+
+
+@router.get("/{school_id}/posts", response_model=List[schemas.PostOut])
+def get_school_posts(
+    school_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get posts published by students of this school or posts shared to this school community."""
+    school = db.query(models.School).filter(models.School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    # Member user IDs for this school
+    member_user_ids = [
+        m.user_id for m in db.query(models.SchoolMember).filter(models.SchoolMember.school_id == school_id).all()
+    ]
+    # Plus any users whose profile has this school
+    profile_user_ids = [
+        u.id for u in db.query(models.User).join(models.Profile).filter(
+            models.User.is_banned == False,
+            models.Profile.school.ilike(school.name)
+        ).all()
+    ]
+    all_school_user_ids = set(member_user_ids + profile_user_ids)
+
+    from backend.app.api.posts import format_post_out
+    posts = db.query(models.Post).filter(
+        models.Post.is_deleted == False,
+        (models.Post.author_id.in_(all_school_user_ids)) | 
+        (models.Post.audience_community_id == school_id)
+    ).order_by(models.Post.created_at.desc()).offset(offset).limit(limit).all()
+
+    return [format_post_out(p, current_user.id, db) for p in posts]
 
 @router.get("/{school_id}/invite-candidates")
 def get_invite_candidates(school_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):

@@ -24,6 +24,7 @@ python3 backend/migrate_post_audience_any.py || true
 python3 backend/migrate_school_columns.py || true
 python3 backend/migrate_follow_status.py || true
 python3 backend/migrate_reactions.py || true
+python3 backend/migrate_school_members.py || true
 
 echo "[1c/4] Seeding verified school directory (Delhi DoE, etc.)..."
 if [ -f "backend/seeds/delhi_schools.json" ]; then

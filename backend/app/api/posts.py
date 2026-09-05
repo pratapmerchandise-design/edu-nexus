@@ -228,10 +228,14 @@ def get_feed(
         posts = [p for p in posts if p.author_id in following_ids or p.author_id == current_user.id]
     if school_only:
         current_school = (getattr(getattr(current_user, 'profile', None), 'school', None) or '').strip().lower()
-        if current_school:
+        viewer_school_ids = {
+            m.school_id for m in db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).all()
+        }
+        if current_school or viewer_school_ids:
             posts = [
                 p for p in posts 
-                if (getattr(getattr(p.author, 'profile', None), 'school', None) or '').strip().lower() == current_school
+                if ((getattr(getattr(p.author, 'profile', None), 'school', None) or '').strip().lower() == current_school and current_school) or
+                   (getattr(p, 'audience_community_id', None) in viewer_school_ids)
             ]
         else:
             posts = []
