@@ -462,7 +462,24 @@ export const ProfilePage: React.FC = () => {
                       </div>
                     ) : (
                       <div className="rounded-2xl overflow-hidden border border-border/80 bg-secondary/30 flex items-center justify-center mt-2">
-                        <img src={post.images[0]} alt="Post visual" className="w-full max-h-[500px] object-contain rounded-2xl" loading="lazy" />
+                        <img 
+                          src={post.images[0]} 
+                          alt="Post visual" 
+                          className="w-full max-h-[500px] object-contain rounded-2xl" 
+                          loading="lazy" 
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            const parent = target.parentElement;
+                            if (parent && !parent.querySelector('video')) {
+                              const videoEl = document.createElement('video');
+                              videoEl.src = post.images[0];
+                              videoEl.controls = true;
+                              videoEl.playsInline = true;
+                              videoEl.className = 'w-full max-h-[500px] object-contain rounded-2xl bg-black';
+                              parent.replaceChild(videoEl, target);
+                            }
+                          }}
+                        />
                       </div>
                     )
                   )}

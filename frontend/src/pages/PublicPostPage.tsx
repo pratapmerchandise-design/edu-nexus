@@ -263,6 +263,18 @@ export const PublicPostPage: React.FC = () => {
                     alt={`Post attachment ${idx + 1}`}
                     className="w-full max-h-[550px] object-cover rounded-2xl hover:scale-[1.01] transition-transform duration-300 cursor-pointer"
                     onClick={() => window.open(imgUrl, '_blank')}
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      const parent = target.parentElement;
+                      if (parent && !parent.querySelector('video')) {
+                        const videoEl = document.createElement('video');
+                        videoEl.src = imgUrl;
+                        videoEl.controls = true;
+                        videoEl.playsInline = true;
+                        videoEl.className = 'w-full max-h-[500px] object-contain rounded-2xl bg-black';
+                        parent.replaceChild(videoEl, target);
+                      }
+                    }}
                   />
                 )}
               </div>

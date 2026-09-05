@@ -542,6 +542,18 @@ export const FeedPage: React.FC = () => {
                           alt="Post visual" 
                           className="w-full max-h-[600px] object-contain rounded-2xl transition-transform duration-200 group-hover:scale-[1.005]" 
                           loading="lazy"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            const parent = target.parentElement;
+                            if (parent && !parent.querySelector('video')) {
+                              const videoEl = document.createElement('video');
+                              videoEl.src = post.images[0];
+                              videoEl.controls = true;
+                              videoEl.playsInline = true;
+                              videoEl.className = 'w-full max-h-[600px] object-contain rounded-2xl bg-black';
+                              parent.replaceChild(videoEl, target);
+                            }
+                          }}
                         />
                       </div>
                     )

@@ -67,5 +67,6 @@ export const timeAgo = (dateString: string) => {
 
 export const isVideoUrl = (url?: string | null): boolean => {
   if (!url) return false;
-  return /\.(mp4|webm|mov|mkv|avi|m4v)(\?.*)?$/i.test(url);
+  const cleanUrl = url.split('?')[0].split('#')[0].toLowerCase();
+  return /\.(mp4|webm|mov|mkv|avi|m4v|ogg|3gp|flv|wmv)$/i.test(cleanUrl) || url.includes('/video/') || url.includes('video/upload');
 };
