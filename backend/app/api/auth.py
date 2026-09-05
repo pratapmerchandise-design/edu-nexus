@@ -109,7 +109,8 @@ def register_user(data: UserRegister, db: Session = Depends(get_db)):
                 role='student'
             )
             db.add(school_member)
-            sync_school_memberships_for_school(db, school_obj)
+            db.flush()
+            sync_school_memberships_for_school(db, school_obj, exclude_user_id=new_user.id)
 
     db.commit()
 

@@ -328,6 +328,10 @@ class OpportunityOut(BaseModel):
     tags: Optional[str] = None
     status: str
     user_bookmarked: bool = False
+    author_id: Optional[int] = None
+    author_username: Optional[str] = None
+    author_name: Optional[str] = None
+    author_avatar: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -706,17 +710,35 @@ class SchoolInvitationCreate(BaseModel):
 class SchoolInvitationOut(BaseModel):
     id: int
     school_id: int
-    user_id: int
+    user_id: Optional[int] = None
+    email: Optional[str] = None
+    token: Optional[str] = None
+    expires_at: Optional[datetime] = None
     invited_by_id: Optional[int] = None
     role: str
     status: str
     created_at: datetime
     school: Optional['SchoolOut'] = None
+    school_name: Optional[str] = None
     user: Optional[UserOut] = None
     invited_by: Optional[UserOut] = None
+    invited_by_username: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class SchoolAdminInviteCreate(BaseModel):
+    email: str
+    school_id: Optional[int] = None
+    school_name: Optional[str] = None
+    expires_in_days: Optional[int] = 7
+
+
+class SchoolAdminInviteRespond(BaseModel):
+    action: str  # 'accept' or 'reject'
+    full_name: Optional[str] = None
+    password: Optional[str] = None
 
 
 # --- Membership / Monetization Schemas ---

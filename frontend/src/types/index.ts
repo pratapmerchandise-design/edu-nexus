@@ -170,6 +170,10 @@ export interface Opportunity {
   tags?: string;
   status: string;
   user_bookmarked: boolean;
+  author_id?: number | null;
+  author_username?: string | null;
+  author_name?: string | null;
+  author_avatar?: string | null;
   created_at: string;
 }
 

@@ -60,24 +60,42 @@ def update_profile(data: ProfileUpdate, current_user: User = Depends(get_current
         profile.city = data.city
     if data.school is not None:
         clean_school = data.school.strip() if data.school else ""
-        profile.school = clean_school or None
         from backend.app.models import SchoolMember
         from backend.app.api.schools import find_or_create_school, sync_school_memberships_for_school
-        
-        # Remove existing membership
-        db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).delete()
-        
-        if clean_school:
+
+        if not clean_school:
+            profile.school = None
+            db.query(SchoolMember).filter(SchoolMember.user_id == current_user.id).delete()
+            db.flush()
+        else:
             school_obj = find_or_create_school(db, clean_school)
             if school_obj:
                 profile.school = school_obj.name
-                school_member = SchoolMember(
-                    school_id=school_obj.id,
-                    user_id=current_user.id,
-                    role='student'
-                )
-                db.add(school_member)
-                sync_school_memberships_for_school(db, school_obj)
+                db.flush()
+
+                # Check if current user is already a member of this school
+                existing_member = db.query(SchoolMember).filter(
+                    SchoolMember.school_id == school_obj.id,
+                    SchoolMember.user_id == current_user.id
+                ).first()
+
+                # Clean up any lingering memberships in other schools
+                db.query(SchoolMember).filter(
+                    SchoolMember.user_id == current_user.id,
+                    SchoolMember.school_id != school_obj.id
+                ).delete()
+                db.flush()
+
+                if not existing_member:
+                    school_member = SchoolMember(
+                        school_id=school_obj.id,
+                        user_id=current_user.id,
+                        role='student'
+                    )
+                    db.add(school_member)
+                    db.flush()
+
+                sync_school_memberships_for_school(db, school_obj, exclude_user_id=current_user.id)
     if data.grade is not None:
         profile.grade = data.grade
     if data.goals is not None:

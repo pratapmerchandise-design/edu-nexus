@@ -88,12 +88,25 @@ def find_or_create_school(db: Session, raw_school_name: str) -> Optional[models.
     return s
 
 
-def sync_school_memberships_for_school(db: Session, school: models.School):
+def sync_school_memberships_for_school(db: Session, school: models.School, exclude_user_id: Optional[int] = None):
     """Automatically ensure all students whose profile indicates this school
     are properly linked as SchoolMembers."""
     if not school:
         return
+    db.flush()
     norm_target = _normalize_school_name(school.name)
+
+    existing_user_ids = {
+        m.user_id for m in db.query(models.SchoolMember.user_id).filter(
+            models.SchoolMember.school_id == school.id
+        ).all()
+    }
+    for obj in db.new:
+        if isinstance(obj, models.SchoolMember) and obj.school_id == school.id:
+            existing_user_ids.add(obj.user_id)
+
+    if exclude_user_id:
+        existing_user_ids.add(exclude_user_id)
 
     users_with_school = db.query(models.User).join(models.Profile).filter(
         models.User.is_banned == False,
@@ -102,6 +115,8 @@ def sync_school_memberships_for_school(db: Session, school: models.School):
 
     changed = False
     for u in users_with_school:
+        if u.id in existing_user_ids:
+            continue
         user_school = (u.profile.school or '').strip()
         if not user_school:
             continue
@@ -114,21 +129,17 @@ def sync_school_memberships_for_school(db: Session, school: models.School):
         elif len(user_school) >= 4 and (user_school.lower() in school.name.lower() or school.name.lower() in user_school.lower()):
             matches = True
 
-        if matches:
-            existing = db.query(models.SchoolMember).filter(
-                models.SchoolMember.school_id == school.id,
-                models.SchoolMember.user_id == u.id
-            ).first()
-            if not existing:
-                db.add(models.SchoolMember(
-                    school_id=school.id,
-                    user_id=u.id,
-                    role='student'
-                ))
-                changed = True
+        if matches and u.id not in existing_user_ids:
+            db.add(models.SchoolMember(
+                school_id=school.id,
+                user_id=u.id,
+                role='student'
+            ))
+            existing_user_ids.add(u.id)
+            changed = True
 
     if changed:
-        db.commit()
+        db.flush()
 
 
 def _school_admins(db: Session, school_id: int):
@@ -165,8 +176,7 @@ def get_my_schools(
                     role='student'
                 )
                 db.add(new_member)
-                db.commit()
-            sync_school_memberships_for_school(db, school_obj)
+            sync_school_memberships_for_school(db, school_obj, exclude_user_id=current_user.id)
 
     school_members = db.query(models.SchoolMember).filter(models.SchoolMember.user_id == current_user.id).all()
     schools = []
@@ -515,6 +525,157 @@ def create_school_admin(
 
     return format_user_out(new_user, new_user.id, db)
 
+@router.get("/admin-invites/{token}")
+def get_admin_invite_details(token: str, db: Session = Depends(get_db)):
+    """Public inspection of a school admin invite token."""
+    inv = db.query(models.SchoolInvitation).filter(models.SchoolInvitation.token == token).first()
+    if not inv:
+        user_legacy = db.query(models.User).filter(models.User.reset_password_token == token).first()
+        if user_legacy:
+            inv = db.query(models.SchoolInvitation).filter(
+                models.SchoolInvitation.user_id == user_legacy.id,
+                models.SchoolInvitation.role == 'admin'
+            ).order_by(models.SchoolInvitation.created_at.desc()).first()
+
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found or invalid link.")
+
+    now = datetime.now(timezone.utc)
+    is_expired = bool(inv.expires_at and inv.expires_at < now)
+    if is_expired and inv.status == 'pending':
+        inv.status = 'expired'
+        db.commit()
+
+    target_email = inv.email or (inv.user.email if inv.user else "")
+    existing_user = db.query(models.User).filter(models.User.email == target_email.lower()).first() if target_email else None
+
+    return {
+        "id": inv.id,
+        "school_id": inv.school_id,
+        "school_name": inv.school.name if inv.school else "Unknown Campus",
+        "school_logo": inv.school.logo_url if inv.school else None,
+        "email": target_email,
+        "role": inv.role or "admin",
+        "status": inv.status,
+        "expires_at": inv.expires_at,
+        "is_expired": inv.status == 'expired' or is_expired,
+        "user_exists": bool(existing_user),
+        "existing_username": existing_user.username if existing_user else None
+    }
+
+
+@router.post("/admin-invites/{token}/respond")
+def respond_admin_invite(
+    token: str,
+    data: schemas.SchoolAdminInviteRespond,
+    db: Session = Depends(get_db)
+):
+    """Accept or reject a school admin invite token."""
+    inv = db.query(models.SchoolInvitation).filter(models.SchoolInvitation.token == token).first()
+    if not inv:
+        user_legacy = db.query(models.User).filter(models.User.reset_password_token == token).first()
+        if user_legacy:
+            inv = db.query(models.SchoolInvitation).filter(
+                models.SchoolInvitation.user_id == user_legacy.id,
+                models.SchoolInvitation.role == 'admin'
+            ).order_by(models.SchoolInvitation.created_at.desc()).first()
+
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found or invalid token.")
+
+    now = datetime.now(timezone.utc)
+    if (inv.expires_at and inv.expires_at < now) or inv.status == 'expired':
+        inv.status = 'expired'
+        db.commit()
+        raise HTTPException(status_code=400, detail="This invitation has expired. Please contact the platform administrator to receive a new invite.")
+
+    if inv.status != 'pending':
+        raise HTTPException(status_code=400, detail=f"This invitation has already been {inv.status}.")
+
+    action = (data.action or "").strip().lower()
+    if action in ['reject', 'decline']:
+        inv.status = 'rejected'
+        db.commit()
+        return {"status": "rejected", "message": "You have declined the school administrator invitation."}
+
+    if action != 'accept':
+        raise HTTPException(status_code=400, detail="Action must be 'accept' or 'reject'.")
+
+    # ACCEPT INVITE
+    school = inv.school
+    target_email = (inv.email or (inv.user.email if inv.user else "")).strip().lower()
+
+    target_user = None
+    if inv.user_id:
+        target_user = db.query(models.User).filter(models.User.id == inv.user_id).first()
+    if not target_user and target_email:
+        target_user = db.query(models.User).filter(models.User.email == target_email).first()
+
+    if not target_user:
+        # Create brand new user
+        if not data.password or len(data.password.strip()) < 6:
+            raise HTTPException(status_code=400, detail="Please provide a password of at least 6 characters.")
+
+        import re
+        base_uname = re.sub(r'[^a-z0-9_]', '', (data.full_name or target_email.split('@')[0]).lower()) or "admin"
+        uname = base_uname
+        suffix = 1
+        while db.query(models.User).filter(models.User.username == uname).first():
+            uname = f"{base_uname}{suffix}"
+            suffix += 1
+
+        target_user = models.User(
+            username=uname,
+            email=target_email,
+            hashed_password=get_password_hash(data.password.strip()),
+            role='student',
+            is_email_verified=True
+        )
+        db.add(target_user)
+        db.flush()
+
+        avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={target_user.username}"
+        db.add(models.Profile(
+            user_id=target_user.id,
+            full_name=data.full_name or uname.title(),
+            avatar_url=avatar_url,
+            school=school.name if school else None
+        ))
+        db.flush()
+    else:
+        # Existing user
+        if school and target_user.profile:
+            target_user.profile.school = school.name
+            db.flush()
+
+    # Assign SchoolMember with role='admin'
+    existing_mem = db.query(models.SchoolMember).filter(
+        models.SchoolMember.school_id == inv.school_id,
+        models.SchoolMember.user_id == target_user.id
+    ).first()
+
+    if existing_mem:
+        existing_mem.role = 'admin'
+    else:
+        new_mem = models.SchoolMember(
+            school_id=inv.school_id,
+            user_id=target_user.id,
+            role='admin'
+        )
+        db.add(new_mem)
+
+    inv.user_id = target_user.id
+    inv.status = 'accepted'
+    db.commit()
+
+    return {
+        "status": "accepted",
+        "message": f"Congratulations! You are now the Administrator of {school.name if school else 'your campus'}.",
+        "username": target_user.username,
+        "school_id": inv.school_id
+    }
+
+
 @router.post("/admin-invitations/{token}/reject")
 def reject_admin_invitation(token: str, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.reset_password_token == token).first()
@@ -688,7 +849,7 @@ def create_school_club(
     admin = db.query(models.SchoolMember).filter(
         models.SchoolMember.school_id == school_id,
         models.SchoolMember.user_id == current_user.id,
-        models.SchoolMember.role == 'admin'
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
     ).first()
 
     if not admin and current_user.role != 'admin':
@@ -767,7 +928,7 @@ def create_school_event(
     admin = db.query(models.SchoolMember).filter(
         models.SchoolMember.school_id == school_id,
         models.SchoolMember.user_id == current_user.id,
-        models.SchoolMember.role == 'admin'
+        models.SchoolMember.role.in_(['admin', 'ambassador'])
     ).first()
 
     if not admin and current_user.role != 'admin':

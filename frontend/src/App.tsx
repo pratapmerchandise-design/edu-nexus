@@ -31,6 +31,7 @@ import { MembershipPage } from './pages/app/MembershipPage';
 import { PublicProfilePage } from './pages/PublicProfilePage';
 import { PublicPostPage } from './pages/PublicPostPage';
 import { RejectInvitationPage } from './pages/RejectInvitationPage';
+import { SchoolInviteResponsePage } from './pages/SchoolInviteResponsePage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; adminOnly?: boolean }> = ({ children, adminOnly }) => {
   const { user, loading } = useAuth();
@@ -77,6 +78,7 @@ export const AppContent: React.FC = () => {
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/set-password" element={<ForgotPasswordPage />} />
       <Route path="/reject-invitation" element={<RejectInvitationPage />} />
+      <Route path="/school-invite" element={<SchoolInviteResponsePage />} />
       <Route path="/u/:username" element={<PublicProfilePage />} />
       <Route path="/p/:id" element={<PublicPostPage />} />
       <Route path="/post/:id" element={<PublicPostPage />} />

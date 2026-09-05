@@ -9,7 +9,7 @@ import {
   Users, Loader2, Send, Building2, MapPin, Search, MessageSquare,
   Bell, Compass, Share2, Check, UserPlus, ShieldCheck,
   GraduationCap, ArrowRight, Heart, Newspaper,
-  UserCheck, Clock
+  UserCheck, Clock, Calendar, Plus, X
 } from 'lucide-react';
 import { SchoolAutocompleteInput } from '../../components/SchoolAutocompleteInput';
 import { timeAgo } from '../../utils/textUtils';
@@ -24,10 +24,11 @@ export const SchoolHubPage: React.FC = () => {
   const [posts, setPosts] = useState<any[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [clubs, setClubs] = useState<any[]>([]);
+  const [events, setEvents] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
-  const [activeTab, setActiveTab] = useState<'members' | 'feed' | 'announcements' | 'clubs'>('members');
+  const [activeTab, setActiveTab] = useState<'members' | 'feed' | 'announcements' | 'events' | 'clubs'>('members');
   const [searchQuery, setSearchQuery] = useState('');
   const [gradeFilter, setGradeFilter] = useState<string>('all');
   const [quickSchoolInput, setQuickSchoolInput] = useState(user?.profile?.school || '');
@@ -35,16 +36,43 @@ export const SchoolHubPage: React.FC = () => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [followingMap, setFollowingMap] = useState<Record<number, boolean>>({});
 
+  // School Admin Modals & Action States
+  const [showAnnounceModal, setShowAnnounceModal] = useState(false);
+  const [announceTitle, setAnnounceTitle] = useState('');
+  const [announceContent, setAnnounceContent] = useState('');
+
+  const [showClubModal, setShowClubModal] = useState(false);
+  const [clubName, setClubName] = useState('');
+  const [clubDesc, setClubDesc] = useState('');
+
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [eventTitle, setEventTitle] = useState('');
+  const [eventDesc, setEventDesc] = useState('');
+  const [eventType, setEventType] = useState('activity');
+  const [eventDate, setEventDate] = useState('');
+
+  const [submittingAction, setSubmittingAction] = useState(false);
+
   const activeSchool = mySchools.find((s) => s.id === activeSchoolId) || null;
+
+  const isSchoolAdmin = Boolean(
+    user?.role === 'admin' ||
+    members.some(
+      (m) =>
+        (m.user?.id === user?.id || m.user?.username === user?.username) &&
+        (m.role === 'admin' || m.role === 'ambassador')
+    )
+  );
 
   const loadSchoolData = useCallback(async (schoolId: number) => {
     setLoadingContent(true);
     try {
-      const [membersRes, postsRes, announcementsRes, clubsRes] = await Promise.allSettled([
+      const [membersRes, postsRes, announcementsRes, clubsRes, eventsRes] = await Promise.allSettled([
         api.get<any[]>(`/schools/${schoolId}/members`),
         api.get<any[]>(`/schools/${schoolId}/posts`),
         api.get<any[]>(`/schools/${schoolId}/announcements`),
         api.get<any[]>(`/schools/${schoolId}/clubs`),
+        api.get<any[]>(`/schools/${schoolId}/events`),
       ]);
 
       if (membersRes.status === 'fulfilled') {
@@ -64,12 +92,82 @@ export const SchoolHubPage: React.FC = () => {
       if (clubsRes.status === 'fulfilled') {
         setClubs(clubsRes.value || []);
       }
+
+      if (eventsRes.status === 'fulfilled') {
+        setEvents(eventsRes.value || []);
+      }
     } catch (e) {
       console.error('Failed to load school hub data', e);
     } finally {
       setLoadingContent(false);
     }
   }, []);
+
+  const handlePostAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSchoolId || !announceTitle.trim() || !announceContent.trim()) return;
+    setSubmittingAction(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/announcements`, {
+        title: announceTitle.trim(),
+        content: announceContent.trim(),
+      });
+      setAnnounceTitle('');
+      setAnnounceContent('');
+      setShowAnnounceModal(false);
+      await loadSchoolData(activeSchoolId);
+      alert('Announcement published to your school community!');
+    } catch (err: any) {
+      alert(err.message || 'Failed to publish announcement');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleCreateClub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSchoolId || !clubName.trim()) return;
+    setSubmittingAction(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/clubs`, {
+        name: clubName.trim(),
+        description: clubDesc.trim(),
+      });
+      setClubName('');
+      setClubDesc('');
+      setShowClubModal(false);
+      await loadSchoolData(activeSchoolId);
+      alert('Campus club created successfully!');
+    } catch (err: any) {
+      alert(err.message || 'Failed to create club');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleAddEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSchoolId || !eventTitle.trim()) return;
+    setSubmittingAction(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/events`, {
+        title: eventTitle.trim(),
+        description: eventDesc.trim(),
+        event_type: eventType,
+        event_date: eventDate ? new Date(eventDate).toISOString() : undefined,
+      });
+      setEventTitle('');
+      setEventDesc('');
+      setEventDate('');
+      setShowEventModal(false);
+      await loadSchoolData(activeSchoolId);
+      alert('Campus event scheduled successfully!');
+    } catch (err: any) {
+      alert(err.message || 'Failed to schedule event');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -385,6 +483,23 @@ export const SchoolHubPage: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('events')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'events'
+                ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
+                : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Campus Events</span>
+            {events.length > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'events' ? 'bg-primary-foreground/20' : 'bg-secondary'}`}>
+                {events.length}
+              </span>
+            )}
+          </button>
+
+          <button
             onClick={() => setActiveTab('clubs')}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'clubs'
@@ -473,13 +588,17 @@ export const SchoolHubPage: React.FC = () => {
                     </div>
 
                     {/* Username & Role */}
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 mb-2">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 mb-2 flex-wrap justify-center">
                       <span>@{person.username}</span>
-                      {m.role && m.role !== 'student' && (
-                        <span className="px-1.5 py-0.2 rounded-md bg-primary/10 text-primary text-[10px] font-bold uppercase">
-                          {m.role}
+                      {m.role === 'admin' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-extrabold uppercase tracking-wide">
+                          <ShieldCheck className="w-3 h-3" /> School Admin
                         </span>
-                      )}
+                      ) : m.role === 'ambassador' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold uppercase">
+                          Ambassador
+                        </span>
+                      ) : null}
                     </div>
 
                     {/* Grade Chip */}
@@ -672,11 +791,20 @@ export const SchoolHubPage: React.FC = () => {
         {/* TAB 3: ANNOUNCEMENTS */}
         {activeTab === 'announcements' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between bg-card border border-border p-4 rounded-2xl">
+            <div className="flex items-center justify-between bg-card border border-border p-4 rounded-2xl flex-wrap gap-3">
               <div>
                 <h3 className="font-bold text-sm text-foreground">Official School Notices</h3>
                 <p className="text-xs text-muted-foreground">Important updates and announcements for {activeSchool?.name}</p>
               </div>
+              {isSchoolAdmin && (
+                <button
+                  onClick={() => setShowAnnounceModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 transition-all cursor-pointer shadow-sm shadow-primary/20"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Post Announcement</span>
+                </button>
+              )}
             </div>
 
             {announcements.length === 0 ? (
@@ -684,8 +812,16 @@ export const SchoolHubPage: React.FC = () => {
                 <Bell className="w-12 h-12 mx-auto text-muted-foreground/40" />
                 <h3 className="text-base font-bold text-foreground">No announcements currently</h3>
                 <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                  Official notices posted by your school ambassadors or admins will appear here.
+                  Official notices posted by your school admins will appear here.
                 </p>
+                {isSchoolAdmin && (
+                  <button
+                    onClick={() => setShowAnnounceModal(true)}
+                    className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 cursor-pointer"
+                  >
+                    Post First Announcement
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -710,14 +846,98 @@ export const SchoolHubPage: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 4: CLUBS */}
+        {/* TAB 4: CAMPUS EVENTS */}
+        {activeTab === 'events' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between bg-card border border-border p-4 rounded-2xl flex-wrap gap-3">
+              <div>
+                <h3 className="font-bold text-sm text-foreground">Campus Events & Activities</h3>
+                <p className="text-xs text-muted-foreground">Competitions, workshops, and gatherings at {activeSchool?.name}</p>
+              </div>
+              {isSchoolAdmin && (
+                <button
+                  onClick={() => setShowEventModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 transition-all cursor-pointer shadow-sm shadow-primary/20"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Schedule Event</span>
+                </button>
+              )}
+            </div>
+
+            {events.length === 0 ? (
+              <div className="text-center py-16 bg-card rounded-3xl border border-dashed border-border space-y-3">
+                <Calendar className="w-12 h-12 mx-auto text-muted-foreground/40" />
+                <h3 className="text-base font-bold text-foreground">No upcoming events scheduled</h3>
+                <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                  School hackathons, sports days, debates, and annual fests will appear here.
+                </p>
+                {isSchoolAdmin && (
+                  <button
+                    onClick={() => setShowEventModal(true)}
+                    className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 cursor-pointer"
+                  >
+                    Schedule First Event
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {events.map((evt) => (
+                  <div key={evt.id} className="bg-card border border-border rounded-2xl p-5 space-y-3 shadow-sm flex flex-col">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <span className="inline-block px-2 py-0.5 rounded-md bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider mb-1.5">
+                          {evt.event_type || 'Activity'}
+                        </span>
+                        <h4 className="font-bold text-base text-foreground truncate">{evt.title}</h4>
+                      </div>
+                      {evt.event_date && (
+                        <div className="px-2.5 py-1 rounded-xl bg-secondary border border-border text-center shrink-0">
+                          <span className="text-[10px] text-muted-foreground block uppercase font-bold">
+                            {new Date(evt.event_date).toLocaleDateString(undefined, { month: 'short' })}
+                          </span>
+                          <span className="text-sm font-black text-foreground">
+                            {new Date(evt.event_date).getDate()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {evt.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">
+                        {evt.description}
+                      </p>
+                    )}
+                    {evt.event_date && (
+                      <div className="mt-auto pt-2 border-t border-border/50 text-[11px] text-muted-foreground flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-primary" />
+                        <span>{new Date(evt.event_date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 5: CLUBS */}
         {activeTab === 'clubs' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between bg-card border border-border p-4 rounded-2xl">
+            <div className="flex items-center justify-between bg-card border border-border p-4 rounded-2xl flex-wrap gap-3">
               <div>
                 <h3 className="font-bold text-sm text-foreground">Campus Clubs & Societies</h3>
                 <p className="text-xs text-muted-foreground">Extracurricular activities and student organizations</p>
               </div>
+              {isSchoolAdmin && (
+                <button
+                  onClick={() => setShowClubModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:brightness-110 transition-all cursor-pointer shadow-sm shadow-primary/20"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Club</span>
+                </button>
+              )}
             </div>
 
             {clubs.length === 0 ? (
@@ -727,6 +947,14 @@ export const SchoolHubPage: React.FC = () => {
                 <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                   Student clubs for debating, robotics, arts, sports, and culture will be listed here.
                 </p>
+                {isSchoolAdmin && (
+                  <button
+                    onClick={() => setShowClubModal(true)}
+                    className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 cursor-pointer"
+                  >
+                    Create First Club
+                  </button>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -761,6 +989,237 @@ export const SchoolHubPage: React.FC = () => {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* MODAL: POST ANNOUNCEMENT */}
+        {showAnnounceModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="w-full max-w-md bg-card border border-border rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <Bell className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Post School Announcement</h3>
+                    <p className="text-[11px] text-muted-foreground">{activeSchool?.name}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAnnounceModal(false)}
+                  className="p-1 rounded-xl text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handlePostAnnouncement} className="space-y-3.5">
+                <div>
+                  <label className="text-xs font-bold text-foreground block mb-1">Announcement Title</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Science Fair Registration Open"
+                    value={announceTitle}
+                    onChange={(e) => setAnnounceTitle(e.target.value)}
+                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-foreground block mb-1">Details & Information</label>
+                  <textarea
+                    required
+                    rows={4}
+                    placeholder="Write the full announcement message for students..."
+                    value={announceContent}
+                    onChange={(e) => setAnnounceContent(e.target.value)}
+                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAnnounceModal(false)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingAction}
+                    className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {submittingAction && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>Publish Announcement</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: CREATE CLUB */}
+        {showClubModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="w-full max-w-md bg-card border border-border rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <Compass className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Create Campus Club</h3>
+                    <p className="text-[11px] text-muted-foreground">{activeSchool?.name}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowClubModal(false)}
+                  className="p-1 rounded-xl text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateClub} className="space-y-3.5">
+                <div>
+                  <label className="text-xs font-bold text-foreground block mb-1">Club Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Robotics & AI Club"
+                    value={clubName}
+                    onChange={(e) => setClubName(e.target.value)}
+                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-foreground block mb-1">Club Purpose / Description</label>
+                  <textarea
+                    rows={3}
+                    placeholder="What activities will this club organize? Who should join?"
+                    value={clubDesc}
+                    onChange={(e) => setClubDesc(e.target.value)}
+                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowClubModal(false)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingAction}
+                    className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {submittingAction && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>Create Club</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: ADD CAMPUS EVENT */}
+        {showEventModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="w-full max-w-md bg-card border border-border rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Schedule Campus Event</h3>
+                    <p className="text-[11px] text-muted-foreground">{activeSchool?.name}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowEventModal(false)}
+                  className="p-1 rounded-xl text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddEvent} className="space-y-3.5">
+                <div>
+                  <label className="text-xs font-bold text-foreground block mb-1">Event Title</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Inter-School Coding Sprint 2026"
+                    value={eventTitle}
+                    onChange={(e) => setEventTitle(e.target.value)}
+                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1">Event Type</label>
+                    <select
+                      value={eventType}
+                      onChange={(e) => setEventType(e.target.value)}
+                      className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-xs text-foreground focus:outline-none focus:border-primary"
+                    >
+                      <option value="activity">Campus Activity</option>
+                      <option value="competition">Competition / Contest</option>
+                      <option value="workshop">Workshop / Seminar</option>
+                      <option value="webinar">Online Session</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1">Date & Time</label>
+                    <input
+                      type="datetime-local"
+                      value={eventDate}
+                      onChange={(e) => setEventDate(e.target.value)}
+                      className="w-full bg-secondary border border-border rounded-xl px-2.5 py-2 text-xs text-foreground focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-foreground block mb-1">Event Description</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide details about registration, venue, or participation rules..."
+                    value={eventDesc}
+                    onChange={(e) => setEventDesc(e.target.value)}
+                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEventModal(false)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingAction}
+                    className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {submittingAction && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>Publish Event</span>
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
 

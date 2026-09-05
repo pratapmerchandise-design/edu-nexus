@@ -15,6 +15,14 @@ EMAIL_PASSWORD = (os.getenv("EMAIL_PASSWORD") or "").replace(" ", "")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "Edu Nexus <edunexus.infodesk@gmail.com>")
 FRONTEND_BASE = os.getenv("FRONTEND_BASE", "http://localhost:5173")
 
+def get_frontend_base() -> str:
+    base = os.getenv("FRONTEND_BASE", "").strip()
+    if base and "localhost" not in base:
+        return base
+    if os.getenv("PROD") or os.path.exists("/var/www/edunexus"):
+        return "https://edu-nexus.online"
+    return base or "http://localhost:5173"
+
 PRIMARY = "#22e079"
 PRIMARY_DARK = "#0b7a43"
 
@@ -143,6 +151,52 @@ def send_account_setup_email(to: str, name: str, school_name: str, token: str) -
       <p>Once activated, you can manage members, announcements, events, clubs, roles, and school moderation.</p>
     """
     return send_email(to, f"Your Edu Nexus admin account for {school_name}", _html_shell("Welcome, School Admin", body))
+
+
+def send_school_admin_invite_email(to: str, school_name: str, token: str, expires_at: datetime) -> bool:
+    base = get_frontend_base()
+    accept_link = f"{base}/school-invite?token={token}&action=accept"
+    reject_link = f"{base}/school-invite?token={token}&action=reject"
+    
+    expires_str = expires_at.strftime("%B %d, %Y at %H:%M UTC") if expires_at else "7 days"
+    
+    body = f"""
+      <p style="font-size:15px;color:#e2e8f0;line-height:1.6;">Hello,</p>
+      <p style="font-size:15px;color:#e2e8f0;line-height:1.6;">
+        You have been invited by the EduNexus Platform Administration to serve as the <strong>Official School Administrator</strong> for <strong>{school_name}</strong>.
+      </p>
+      <div style="background:#0f1d16;border:1px solid #1e3a2b;border-radius:12px;padding:16px;margin:20px 0;">
+        <p style="margin:0 0 8px;font-weight:700;color:{PRIMARY};font-size:13px;text-transform:uppercase;letter-spacing:0.05em;">Your School Admin Capabilities:</p>
+        <ul style="margin:0;padding-left:20px;color:#cbd5e1;font-size:13px;line-height:1.6;">
+          <li>Publish official campus notices & announcements to all students</li>
+          <li>Schedule and manage school-wide events & competitions</li>
+          <li>Approve, organize, and moderate student clubs & societies</li>
+        </ul>
+      </div>
+      <p style="font-size:13px;color:#f59e0b;margin:16px 0;font-weight:600;">
+        ⏰ Invitation timeline: This invitation is valid until <strong>{expires_str}</strong>. If not responded to by this deadline, it will expire.
+      </p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 12px;">
+        <tr>
+          <td align="center">
+            <a href="{accept_link}" style="display:inline-block;background:{PRIMARY};color:#04140b;font-weight:800;font-size:15px;text-decoration:none;padding:14px 32px;border-radius:12px;box-shadow:0 4px 12px rgba(34,224,121,0.25);">
+              Accept & Become School Admin
+            </a>
+          </td>
+        </tr>
+      </table>
+      <p style="text-align:center;margin:12px 0 20px;">
+        <a href="{reject_link}" style="color:#94a3b8;font-size:13px;text-decoration:underline;">
+          Decline this invitation
+        </a>
+      </p>
+      <p style="font-size:11px;color:#64748b;line-height:1.4;margin-top:24px;border-top:1px solid #1e2922;padding-top:16px;">
+        If the button above does not work, copy and paste this link into your browser:<br/>
+        <span style="color:{PRIMARY};word-break:break-all;">{accept_link}</span>
+      </p>
+    """
+    return send_email(to, f"Invitation: Become School Administrator for {school_name}", _html_shell(f"School Admin Invitation - {school_name}", body))
+
 
 
 def notify(

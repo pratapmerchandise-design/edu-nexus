@@ -90,6 +90,14 @@ def format_opp_out(opp: Opportunity, current_user_id: Optional[int], db: Session
             OpportunityBookmark.user_id == current_user_id
         ).first() is not None
 
+    author_name = None
+    author_username = None
+    author_avatar = None
+    if opp.author:
+        author_username = opp.author.username
+        author_name = opp.author.profile.full_name if opp.author.profile and opp.author.profile.full_name else opp.author.username
+        author_avatar = opp.author.profile.avatar_url if opp.author.profile else None
+
     return {
         "id": opp.id,
         "title": opp.title,
@@ -107,6 +115,10 @@ def format_opp_out(opp: Opportunity, current_user_id: Optional[int], db: Session
         "tags": opp.tags,
         "status": opp.status,
         "user_bookmarked": user_bookmarked,
+        "author_id": opp.author_id,
+        "author_username": author_username,
+        "author_name": author_name,
+        "author_avatar": author_avatar,
         "created_at": opp.created_at
     }
 
@@ -188,15 +200,45 @@ def toggle_bookmark(
         db.commit()
         return {"bookmarked": True}
 
-# Admin endpoints for opportunities
+# Endpoints for opportunities creation & deletion
 @router.post("", response_model=OpportunityOut)
 def create_opportunity(
     data: OpportunityCreate,
-    admin: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    new_opp = Opportunity(**data.model_dump())
+    """Students and platform admins can both post opportunities."""
+    new_opp = Opportunity(
+        **data.model_dump(),
+        author_id=current_user.id
+    )
     db.add(new_opp)
     db.commit()
     db.refresh(new_opp)
-    return format_opp_out(new_opp, admin.id, db)
+    return format_opp_out(new_opp, current_user.id, db)
+
+
+@router.delete("/{opp_id}")
+def delete_opportunity(
+    opp_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Platform admin can delete any opportunity; students can delete only their own."""
+    opp = db.query(Opportunity).filter(Opportunity.id == opp_id).first()
+    if not opp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+
+    is_admin = current_user.role == 'admin'
+    is_author = opp.author_id == current_user.id
+
+    if not is_admin and not is_author:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are only allowed to delete opportunities you created."
+        )
+
+    db.query(OpportunityBookmark).filter(OpportunityBookmark.opportunity_id == opp_id).delete()
+    db.delete(opp)
+    db.commit()
+    return {"message": "Opportunity deleted successfully", "id": opp_id}

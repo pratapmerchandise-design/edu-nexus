@@ -294,7 +294,10 @@ class Opportunity(Base):
     external_url = Column(String(500), nullable=True)
     tags = Column(String(255), nullable=True) # comma separated
     status = Column(String(30), default='Open') # 'Open', 'Closing Soon', 'Closed'
+    author_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
+
+    author = relationship('User')
 
 class OpportunityBookmark(Base):
     __tablename__ = 'opportunity_bookmarks'
@@ -571,10 +574,13 @@ class SchoolInvitation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     school_id = Column(Integer, ForeignKey('schools.id', ondelete='CASCADE'), nullable=False)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    email = Column(String(255), nullable=True, index=True)
     invited_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
-    role = Column(String(50), nullable=False, default='student')
-    status = Column(String(30), default='pending')  # 'pending', 'accepted', 'declined', 'expired'
+    role = Column(String(50), nullable=False, default='admin')
+    status = Column(String(30), default='pending')  # 'pending', 'accepted', 'rejected', 'expired'
+    token = Column(String(64), unique=True, index=True, nullable=True)
+    expires_at = Column(UTCDateTime, nullable=True)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc))
 
     school = relationship('School')

@@ -1,7 +1,10 @@
+from datetime import datetime, timezone, timedelta
+import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from backend.app.database import get_db
+from backend.app import models, schemas
 from backend.app.models import User, Post, Comment, ForumThread, Opportunity, Report, Block
 from backend.app.schemas import ReportCreate, ReportOut, UserOut
 from backend.app.auth.security import get_current_user, get_current_admin
@@ -131,3 +134,182 @@ def admin_resolve_report(report_id: int, status_val: str = "resolved", admin: Us
     report.status = status_val
     db.commit()
     return {"message": f"Report status updated to {status_val}"}
+
+
+# --- SCHOOL ADMIN INVITATIONS (PLATFORM ADMIN) ---
+
+@router.get("/admin/school-invites", response_model=List[schemas.SchoolInvitationOut])
+def list_school_invites(admin: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """List all sent school admin invitations, updating expired statuses."""
+    now = datetime.now(timezone.utc)
+    pending_invites = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.status == 'pending'
+    ).all()
+    changed = False
+    for inv in pending_invites:
+        if inv.expires_at and inv.expires_at < now:
+            inv.status = 'expired'
+            changed = True
+    if changed:
+        db.commit()
+
+    invites = db.query(models.SchoolInvitation).order_by(models.SchoolInvitation.created_at.desc()).all()
+    out = []
+    for inv in invites:
+        school = inv.school
+        inviter = inv.invited_by
+        out.append({
+            "id": inv.id,
+            "school_id": inv.school_id,
+            "school_name": school.name if school else "Unknown School",
+            "user_id": inv.user_id,
+            "email": inv.email or (inv.user.email if inv.user else None),
+            "token": inv.token,
+            "expires_at": inv.expires_at,
+            "invited_by_id": inv.invited_by_id,
+            "invited_by_username": inviter.username if inviter else "admin",
+            "role": inv.role or "admin",
+            "status": inv.status,
+            "created_at": inv.created_at
+        })
+    return out
+
+
+@router.post("/admin/school-invites", response_model=schemas.SchoolInvitationOut)
+def send_school_admin_invite(
+    data: schemas.SchoolAdminInviteCreate,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Platform admin sends a school admin invitation email with expiration timeline."""
+    from backend.app.api.schools import find_or_create_school
+    from backend.app import email as mail
+
+    clean_email = data.email.strip().lower()
+    if not clean_email or "@" not in clean_email:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+
+    # Locate or create the school
+    school = None
+    if data.school_id:
+        school = db.query(models.School).filter(models.School.id == data.school_id).first()
+    elif data.school_name and data.school_name.strip():
+        school = find_or_create_school(db, data.school_name.strip())
+
+    if not school:
+        raise HTTPException(status_code=400, detail="Please select or provide a valid school.")
+
+    days = data.expires_in_days if (data.expires_in_days and data.expires_in_days > 0) else 7
+    expires_at = datetime.now(timezone.utc) + timedelta(days=days)
+    token = secrets.token_urlsafe(32)
+
+    # Check if existing invite for this school + email exists
+    existing_invite = db.query(models.SchoolInvitation).filter(
+        models.SchoolInvitation.school_id == school.id,
+        models.SchoolInvitation.email == clean_email
+    ).first()
+
+    existing_user = db.query(User).filter(User.email == clean_email).first()
+
+    if existing_invite:
+        existing_invite.token = token
+        existing_invite.expires_at = expires_at
+        existing_invite.status = 'pending'
+        existing_invite.invited_by_id = admin.id
+        existing_invite.created_at = datetime.now(timezone.utc)
+        if existing_user:
+            existing_invite.user_id = existing_user.id
+        inv = existing_invite
+    else:
+        inv = models.SchoolInvitation(
+            school_id=school.id,
+            user_id=existing_user.id if existing_user else None,
+            email=clean_email,
+            invited_by_id=admin.id,
+            role='admin',
+            status='pending',
+            token=token,
+            expires_at=expires_at
+        )
+        db.add(inv)
+
+    db.commit()
+    db.refresh(inv)
+
+    # Send invitation email via Gmail SMTP
+    mail.send_school_admin_invite_email(clean_email, school.name, token, expires_at)
+
+    return {
+        "id": inv.id,
+        "school_id": inv.school_id,
+        "school_name": school.name,
+        "user_id": inv.user_id,
+        "email": inv.email,
+        "token": inv.token,
+        "expires_at": inv.expires_at,
+        "invited_by_id": inv.invited_by_id,
+        "invited_by_username": admin.username,
+        "role": inv.role or "admin",
+        "status": inv.status,
+        "created_at": inv.created_at
+    }
+
+
+@router.post("/admin/school-invites/{invite_id}/resend", response_model=schemas.SchoolInvitationOut)
+def resend_school_admin_invite(
+    invite_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Resend school admin invitation with a fresh token and expiration timeline."""
+    from backend.app import email as mail
+
+    inv = db.query(models.SchoolInvitation).filter(models.SchoolInvitation.id == invite_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+    inv.token = token
+    inv.expires_at = expires_at
+    inv.status = 'pending'
+    inv.created_at = datetime.now(timezone.utc)
+    inv.invited_by_id = admin.id
+    db.commit()
+    db.refresh(inv)
+
+    target_email = inv.email or (inv.user.email if inv.user else "")
+    if target_email:
+        mail.send_school_admin_invite_email(target_email, inv.school.name if inv.school else "your school", token, expires_at)
+
+    return {
+        "id": inv.id,
+        "school_id": inv.school_id,
+        "school_name": inv.school.name if inv.school else "School",
+        "user_id": inv.user_id,
+        "email": inv.email,
+        "token": inv.token,
+        "expires_at": inv.expires_at,
+        "invited_by_id": inv.invited_by_id,
+        "invited_by_username": admin.username,
+        "role": inv.role or "admin",
+        "status": inv.status,
+        "created_at": inv.created_at
+    }
+
+
+@router.delete("/admin/school-invites/{invite_id}")
+def delete_school_admin_invite(
+    invite_id: int,
+    admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Delete/cancel a school admin invitation."""
+    inv = db.query(models.SchoolInvitation).filter(models.SchoolInvitation.id == invite_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+    db.delete(inv)
+    db.commit()
+    return {"message": "Invitation cancelled and removed."}
+
