@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from backend.app.database import get_db
 from backend.app import models, schemas
@@ -209,7 +210,7 @@ def send_school_admin_invite(
         models.SchoolInvitation.email == clean_email
     ).first()
 
-    existing_user = db.query(User).filter(User.email == clean_email).first()
+    existing_user = db.query(User).filter(func.lower(User.email) == clean_email).first()
 
     if existing_invite:
         existing_invite.token = token
@@ -233,7 +234,45 @@ def send_school_admin_invite(
         )
         db.add(inv)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as commit_err:
+        db.rollback()
+        err_str = str(commit_err).lower()
+        if "user_id" in err_str or "not null" in err_str:
+            # Self-heal old table schema where user_id was NOT NULL
+            try:
+                from backend.migrate_school_admin_invites import run as run_migration
+                run_migration()
+                # Re-try with fresh query
+                if existing_invite:
+                    existing_invite = db.query(models.SchoolInvitation).filter(models.SchoolInvitation.id == existing_invite.id).first()
+                    if existing_invite:
+                        existing_invite.token = token
+                        existing_invite.expires_at = expires_at
+                        existing_invite.status = 'pending'
+                        existing_invite.invited_by_id = admin.id
+                        if existing_user:
+                            existing_invite.user_id = existing_user.id
+                        inv = existing_invite
+                else:
+                    inv = models.SchoolInvitation(
+                        school_id=school.id,
+                        user_id=existing_user.id if existing_user else None,
+                        email=clean_email,
+                        invited_by_id=admin.id,
+                        role='admin',
+                        status='pending',
+                        token=token,
+                        expires_at=expires_at
+                    )
+                    db.add(inv)
+                db.commit()
+            except Exception as retry_err:
+                raise HTTPException(status_code=500, detail=f"Failed to save invitation: {retry_err}")
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to save invitation: {commit_err}")
+
     db.refresh(inv)
 
     # Send invitation email via Gmail SMTP
