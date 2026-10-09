@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
-from backend.app.models import User, Profile, Interest, Skill, OTPVerification, School, SchoolJoinRequest, SchoolInvitation
+from backend.app.models import User, Profile, Interest, Skill, OTPVerification, School, SchoolMember, SchoolJoinRequest, SchoolInvitation
 from backend.app.schemas import UserRegister, UserLogin, Token, CheckAvailabilityRequest
 from backend.app.auth.security import get_password_hash, verify_password, create_access_token, get_current_user
 from backend.app.utils import format_user_out
