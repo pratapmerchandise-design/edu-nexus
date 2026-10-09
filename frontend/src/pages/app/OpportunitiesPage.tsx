@@ -578,8 +578,13 @@ export const OpportunitiesPage: React.FC = () => {
                     <input
                       type="date"
                       value={newOpp.deadline}
+                      onClick={(e) => {
+                        try {
+                          (e.target as HTMLInputElement).showPicker?.();
+                        } catch (_) {}
+                      }}
                       onChange={(e) => setNewOpp({ ...newOpp, deadline: e.target.value })}
-                      className="w-full bg-background border border-border rounded-xl px-3.5 py-2.5 text-foreground focus:outline-none focus:border-primary"
+                      className="w-full bg-background border border-border rounded-xl px-3.5 py-2.5 text-foreground focus:outline-none focus:border-primary cursor-pointer [color-scheme:light] dark:[color-scheme:dark]"
                     />
                   </div>
 

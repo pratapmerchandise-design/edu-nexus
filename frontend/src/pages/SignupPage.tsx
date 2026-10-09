@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import { passwordRules, isStrongPassword } from '../utils/passwordPolicy';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Calendar } from 'lucide-react';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { SchoolAutocompleteInput } from '../components/SchoolAutocompleteInput';
 
@@ -420,13 +420,43 @@ export const SignupPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Date of Birth</label>
-                  <input
-                    type="date"
-                    value={form.dob}
-                    onChange={(e) => setForm({ ...form, dob: e.target.value })}
-                    className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="signup-dob" className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Date of Birth
+                    </label>
+                    <span className="text-[10px] text-muted-foreground">Select date</span>
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      id="signup-dob"
+                      type="date"
+                      value={form.dob}
+                      max={new Date().toISOString().split('T')[0]}
+                      onClick={(e) => {
+                        try {
+                          (e.target as HTMLInputElement).showPicker?.();
+                        } catch (_) {}
+                      }}
+                      onChange={(e) => setForm({ ...form, dob: e.target.value })}
+                      className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 pr-10 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary cursor-pointer [color-scheme:light] dark:[color-scheme:dark]"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Open calendar"
+                      tabIndex={-1}
+                      onClick={() => {
+                        const input = document.getElementById('signup-dob') as HTMLInputElement;
+                        try {
+                          input?.showPicker?.();
+                        } catch (_) {
+                          input?.focus();
+                        }
+                      }}
+                      className="absolute right-3 p-1 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                    >
+                      <Calendar className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 

@@ -716,8 +716,13 @@ export const AdminPage: React.FC = () => {
                     <input
                       type="date"
                       value={oppForm.deadline}
+                      onClick={(e) => {
+                        try {
+                          (e.target as HTMLInputElement).showPicker?.();
+                        } catch (_) {}
+                      }}
                       onChange={(e) => setOppForm({ ...oppForm, deadline: e.target.value })}
-                      className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:border-primary"
+                      className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-foreground focus:outline-none focus:border-primary cursor-pointer [color-scheme:light] dark:[color-scheme:dark]"
                     />
                   </div>
 
